@@ -36,6 +36,38 @@ const write = (text: string) => {
   fireEvent.change(input, { target: { value: text } });
   fireEvent.blur(input);
 };
+describe("theme switching", () => {
+  it("switches from the library, keeps the theme on the canvas, and restores it", () => {
+    const first = render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Switch to light mode" }));
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(localStorage.getItem("rtboard.theme")).toBe("light");
+    fireEvent.click(screen.getByRole("button", { name: "Create your first board" }));
+    expect(screen.getByRole("button", { name: "Switch to dark mode" })).toBeTruthy();
+    first.unmount();
+    render(<App initial={seed()} />);
+    expect(document.documentElement.dataset.theme).toBe("light");
+    fireEvent.click(screen.getByRole("button", { name: "Switch to dark mode" }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("rtboard.theme")).toBe("dark");
+  });
+
+  it("allows switching when theme storage is blocked", () => {
+    const getItem = localStorage.getItem.bind(localStorage);
+    const setItem = localStorage.setItem.bind(localStorage);
+    vi.spyOn(localStorage, "getItem").mockImplementation((key) => {
+      if (key === "rtboard.theme") throw new Error("Storage blocked");
+      return getItem(key);
+    });
+    vi.spyOn(localStorage, "setItem").mockImplementation((key, value) => {
+      if (key === "rtboard.theme") throw new Error("Storage blocked");
+      setItem(key, value);
+    });
+    render(<App initial={seed()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Switch to light mode" }));
+    expect(document.documentElement.dataset.theme).toBe("light");
+  });
+});
 describe("canvas workflow", () => {
   it("copies and pastes connected selections through the system clipboard payload", () => {
     const initial = seed();
