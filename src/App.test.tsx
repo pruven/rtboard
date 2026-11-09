@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+// @vitest-environment-options {"settings":{"disableIframePageLoading":true,"handleDisabledFileLoadingAsSuccess":true}}
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
@@ -68,7 +69,394 @@ describe("theme switching", () => {
     expect(document.documentElement.dataset.theme).toBe("light");
   });
 });
+describe("Select and Hand modes", () => {
+  const withNode = () => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "node", kind: "shape", x: 0, y: 0, w: 100, h: 100, text: "Node" }];
+    return render(<App initial={initial} />);
+  };
+
+  it("switches between Select (V) and Hand (H), panning over selected items without moving or editing them", () => {
+    const { container } = withNode();
+    const canvas = container.querySelector(".canvas")!;
+    const node = container.querySelector<HTMLElement>('[data-item-id="node"]')!;
+    fireEvent.pointerDown(node, { button: 0, clientX: 50, clientY: 50, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 50, clientY: 50, pointerId: 1 });
+    fireEvent.keyDown(window, { key: "h" });
+    expect(screen.getByRole("button", { name: "Hand" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.pointerDown(node, { button: 0, clientX: 50, clientY: 50, pointerId: 2 });
+    expect(canvas.classList.contains("is-panning")).toBe(true);
+    fireEvent.pointerMove(canvas, { clientX: 150, clientY: 120, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 150, clientY: 120, pointerId: 2 });
+    expect(container.querySelector<HTMLElement>(".world")!.style.transform).toBe("translate(100px,70px) scale(1)");
+    expect(node.style.left).toBe("0px");
+    expect(node.style.top).toBe("0px");
+    expect(node.classList.contains("selected")).toBe(true);
+    expect(canvas.classList.contains("is-panning")).toBe(false);
+    fireEvent.doubleClick(node);
+    expect(screen.queryByLabelText("Edit text")).toBeNull();
+    fireEvent.keyDown(window, { key: "v" });
+    expect(screen.getByRole("button", { name: "Select" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.pointerDown(node, { button: 0, clientX: 150, clientY: 120, pointerId: 3 });
+    fireEvent.pointerMove(canvas, { clientX: 170, clientY: 120, pointerId: 3 });
+    fireEvent.pointerUp(canvas, { clientX: 170, clientY: 120, pointerId: 3 });
+    expect(node.style.left).toBe("20px");
+  });
+
+  it.each(["Select", "Draw", "Connector", "Text", "Shapes"])("temporarily pans with the middle mouse button and restores %s", (tool) => {
+    const { container } = withNode();
+    const canvas = container.querySelector(".canvas")!;
+    const node = container.querySelector<HTMLElement>('[data-item-id="node"]')!;
+    const button = screen.getByRole("button", { name: tool });
+    fireEvent.click(button);
+    if (tool === "Draw") fireEvent.doubleClick(button);
+    expect(fireEvent.pointerDown(node, { button: 1, clientX: 50, clientY: 50, pointerId: 1 })).toBe(false);
+    expect(screen.getByRole("button", { name: "Hand" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.pointerMove(canvas, { clientX: 150, clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { button: 1, clientX: 150, clientY: 100, pointerId: 1 });
+    expect(container.querySelector<HTMLElement>(".world")!.style.transform).toBe("translate(100px,50px) scale(1)");
+    expect(node.style.left).toBe("0px");
+    expect(node.style.top).toBe("0px");
+    expect(container.querySelectorAll(".board-item")).toHaveLength(1);
+    expect(container.querySelectorAll(".connector-line")).toHaveLength(0);
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    if (tool === "Draw") expect(button.querySelector(".locked")).toBeTruthy();
+  });
+
+  it("pans over resize handles and links, suppresses middle-click navigation, and restores the tool on cancel or blur", () => {
+    const { container } = withNode();
+    const canvas = container.querySelector(".canvas")!;
+    const node = container.querySelector<HTMLElement>('[data-item-id="node"]')!;
+    fireEvent.pointerDown(node, { button: 0, clientX: 50, clientY: 50, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 50, clientY: 50, pointerId: 1 });
+    fireEvent.pointerDown(screen.getByTitle("Drag to resize"), { button: 1, clientX: 100, clientY: 100, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 120, clientY: 130, pointerId: 2 });
+    fireEvent.pointerCancel(canvas, { pointerId: 2 });
+    expect(node.style.width).toBe("100px");
+    expect(node.style.height).toBe("100px");
+    expect(screen.getByRole("button", { name: "Select" }).getAttribute("aria-pressed")).toBe("true");
+    const link = document.createElement("a");
+    link.href = "https://example.com/";
+    canvas.append(link);
+    expect(fireEvent.pointerDown(link, { button: 1, clientX: 100, clientY: 100, pointerId: 3 })).toBe(false);
+    expect(fireEvent(link, new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }))).toBe(false);
+    fireEvent.blur(window);
+    expect(canvas.classList.contains("is-panning")).toBe(false);
+    expect(screen.getByRole("button", { name: "Select" }).getAttribute("aria-pressed")).toBe("true");
+    link.remove();
+  });
+
+  it("keeps Space-drag as a temporary Hand shortcut", () => {
+    const { container } = withNode();
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.click(screen.getByRole("button", { name: "Connector" }));
+    fireEvent.keyDown(window, { code: "Space", key: " " });
+    expect(screen.getByRole("button", { name: "Hand" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 200, clientY: 200, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 240, clientY: 260, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 240, clientY: 260, pointerId: 1 });
+    fireEvent.keyUp(window, { code: "Space", key: " " });
+    expect(container.querySelector<HTMLElement>(".world")!.style.transform).toBe("translate(40px,60px) scale(1)");
+    expect(screen.getByRole("button", { name: "Connector" }).getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+describe("dragging selected elements", () => {
+  it.each(["link", "video", "audio"] as const)("drags selected %s media and provides an explicit playback interaction", (kind) => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "media", kind, x: 20, y: 30, w: 300, h: 200, text: "Media",
+      src: kind === "link" ? "https://www.instagram.com/reel/abc/" : `https://example.com/media.${kind === "video" ? "mp4" : "mp3"}` }];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+    const item = container.querySelector<HTMLElement>('[data-item-id="media"]')!;
+    fireEvent.pointerDown(screen.getByLabelText("Drag Media"), { button: 0, clientX: 50, clientY: 60, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 100, clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 100, clientY: 100, pointerId: 1 });
+    expect(item.style.left).toBe("70px");
+    expect(item.style.top).toBe("70px");
+    fireEvent.click(screen.getByRole("button", { name: "Interact with media" }));
+    expect(container.querySelector(".media-drag-surface")).toBeNull();
+    if (kind === "link") expect(item.querySelector("iframe")!.style.pointerEvents).toBe("auto");
+    // The border stays draggable even while the media itself accepts input.
+    fireEvent.pointerDown(item.querySelector(".drag-edge.right")!, { button: 0, clientX: 370, clientY: 100, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 390, clientY: 110, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 390, clientY: 110, pointerId: 2 });
+    expect(item.style.left).toBe("90px");
+    expect(item.style.top).toBe("80px");
+    expect(container.querySelector(".media-drag-surface")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(item.style.left).toBe("70px");
+    expect(item.style.top).toBe("70px");
+  });
+
+  it("drags a multiselection from its empty space and preserves middle-button panning", () => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "a", kind: "shape", x: 0, y: 0, w: 100, h: 100, text: "A" },
+      { id: "b", kind: "shape", x: 300, y: 0, w: 100, h: 100, text: "B" },
+    ];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+    fireEvent.pointerDown(screen.getByLabelText("Drag selected elements"), { button: 0, clientX: 200, clientY: 50, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 240, clientY: 80, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 240, clientY: 80, pointerId: 1 });
+    const a = container.querySelector<HTMLElement>('[data-item-id="a"]')!;
+    const b = container.querySelector<HTMLElement>('[data-item-id="b"]')!;
+    expect([a.style.left, b.style.left]).toEqual(["40px", "340px"]);
+    expect([a.style.top, b.style.top]).toEqual(["30px", "30px"]);
+    fireEvent.pointerDown(screen.getByLabelText("Drag selected elements"), { button: 1, clientX: 240, clientY: 80, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 280, clientY: 110, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { button: 1, clientX: 280, clientY: 110, pointerId: 2 });
+    expect([a.style.left, b.style.left]).toEqual(["40px", "340px"]);
+    expect(container.querySelector<HTMLElement>(".world")!.style.transform).toBe("translate(40px,30px) scale(1)");
+    expect(container.querySelectorAll(".board-item.selected")).toHaveLength(2);
+  });
+});
+
+describe("review regressions", () => {
+  const connected = (drawing = false) => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "a", kind: "shape", x: 0, y: 0, w: 100, h: 100, text: "A" },
+      { id: "b", kind: "shape", x: 300, y: 200, w: 100, h: 100, text: "B" },
+      { id: "c", kind: "shape", x: 600, y: 200, w: 100, h: 100, text: "C" },
+    ];
+    if (drawing) initial.boards[0].items.push({ id: "arrow", kind: "drawing", x: 95, y: 45, w: 210, h: 210,
+      text: "", arrow: true, route: "elbow", points: [[5, 5], [205, 205]],
+      startBinding: "a", endBinding: "b", bindingsInitialized: true });
+    else initial.boards[0].connections = [{ id: "line", from: "a", to: "b", route: "elbow" }];
+    return initial;
+  };
+
+  it("deletes all selected elements after selecting a connector then pressing Ctrl+A", () => {
+    const { container } = render(<App initial={connected()} />);
+    fireEvent.pointerDown(container.querySelector(".connector-line")!, { button: 0 });
+    expect(screen.getByLabelText("Reconnect end")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+    expect(container.querySelectorAll(".board-item.selected")).toHaveLength(3);
+    expect(screen.queryByLabelText("Reconnect end")).toBeNull();
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(container.querySelectorAll(".board-item")).toHaveLength(0);
+    expect(container.querySelectorAll(".connector-line")).toHaveLength(0);
+  });
+
+  it.each([false, true])("can commit and cancel keyboard reconnection (drawing=%s)", async (drawing) => {
+    const { container } = render(<App initial={connected(drawing)} />);
+    const canvas = container.querySelector(".canvas")!;
+    const selectable = container.querySelector(drawing ? '[data-item-id="arrow"]' : ".connector-line")!;
+    fireEvent.pointerDown(selectable, { button: 0, clientX: 100, clientY: 50, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 100, clientY: 50, pointerId: 1 });
+    const path = () => container.querySelector(drawing ? ".item-drawing path" : ".connector-line")!.getAttribute("d");
+    const before = path();
+    const handle = screen.getByRole("button", { name: "Reconnect end" });
+    expect(handle.getAttribute("tabindex")).toBe("0");
+    handle.focus();
+    fireEvent.keyDown(handle, { key: "Enter" });
+    expect(screen.getByRole("dialog", { name: "Reconnect endpoint" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "A" })).toBeNull(); // No self-loop.
+    const select = screen.getByLabelText("Attach to element");
+    fireEvent.change(select, { target: { value: "c" } });
+    fireEvent.keyDown(select, { key: "Escape" });
+    expect(path()).toBe(before);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(handle));
+    fireEvent.keyDown(handle, { key: " " });
+    fireEvent.change(screen.getByLabelText("Attach to element"), { target: { value: "c" } });
+    fireEvent.submit(screen.getByRole("button", { name: "Apply connection" }).closest("form")!);
+    expect(path()).not.toBe(before);
+    expect(path()!.endsWith(drawing ? "505 205" : "600 250")).toBe(true);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(path()).toBe(before);
+  });
+
+  it("renders bound drawing routes using the element centers rather than the endpoint gap", () => {
+    const initial = connected(true);
+    initial.boards[0].items[0].w = 500;
+    Object.assign(initial.boards[0].items[1], { x: 600, y: 400, w: 500 });
+    const { container } = render(<App initial={initial} />);
+    expect(container.querySelector(".item-drawing path")!.getAttribute("d"))
+      .toBe("M 5 5 L 55 5 L 55 405 L 105 405");
+  });
+
+  it("keeps a parent-side pan area available while an Instagram player is interactive", () => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "media", kind: "link", x: 0, y: 0, w: 330, h: 520,
+      text: "Instagram", src: "https://instagram.com/p/ABC/" }];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "Interact with media" }));
+    const frame = container.querySelector("iframe")!;
+    expect(frame.style.pointerEvents).toBe("auto");
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-popups allow-popups-to-escape-sandbox");
+    const footer = container.querySelector(".embed-footer")!;
+    expect(footer.getAttribute("title")).toContain("Middle-drag this footer");
+    fireEvent.pointerDown(footer, { button: 1, clientX: 50, clientY: 510, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 150, clientY: 550, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { button: 1, clientX: 150, clientY: 550, pointerId: 1 });
+    expect(container.querySelector<HTMLElement>(".world")!.style.transform).toBe("translate(100px,40px) scale(1)");
+    expect(container.querySelector<HTMLElement>(".board-item")!.style.left).toBe("0px");
+    expect(screen.getByRole("button", { name: "Select" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Hand" }));
+    expect(frame.style.pointerEvents).toBe("none");
+  });
+});
+
 describe("canvas workflow", () => {
+  it.each(["start", "end"] as const)("keeps a snapped %s endpoint attached when the other end is free", (endpoint) => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "node", kind: "shape", x: 300, y: 200, w: 100, h: 100, text: "Node" }];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    const start = endpoint === "start" ? { x: 288, y: 250 } : { x: 50, y: 250 };
+    const end = endpoint === "end" ? { x: 288, y: 250 } : { x: 50, y: 250 };
+    fireEvent.keyDown(window, { key: "c" });
+    fireEvent.pointerDown(canvas, { button: 0, clientX: start.x, clientY: start.y, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: end.x, clientY: end.y, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: end.x, clientY: end.y, pointerId: 1 });
+    const line = () => container.querySelector<HTMLElement>(".item-drawing")!;
+    const path = () => line().querySelector("path")!.getAttribute("d");
+    const beforeX = Number.parseFloat(line().style.left);
+    const beforePath = path();
+    fireEvent.pointerDown(container.querySelector('[data-item-id="node"]')!, { button: 0, clientX: 350, clientY: 250, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 450, clientY: 250, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 450, clientY: 250, pointerId: 2 });
+    // The free endpoint remains at x=50 while the bound endpoint moves 300→400.
+    expect(Number.parseFloat(line().style.left)).toBe(beforeX);
+    expect(path()).not.toBe(beforePath);
+    expect(path()).toContain(endpoint === "start" ? "M 355 5" : "L 355 5");
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(path()).toBe(beforePath);
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
+    expect(path()).toContain(endpoint === "start" ? "M 355 5" : "L 355 5");
+  });
+
+  it("can bind an existing free connector endpoint and then follows its target", () => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "node", kind: "shape", x: 300, y: 200, w: 100, h: 100, text: "Node" },
+      { id: "arrow", kind: "drawing", x: 45, y: 245, w: 160, h: 10, text: "", arrow: true,
+        points: [[5, 5], [155, 5]], bindingsInitialized: true },
+    ];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.pointerDown(container.querySelector('[data-item-id="arrow"]')!, { button: 0, clientX: 200, clientY: 250, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 200, clientY: 250, pointerId: 1 });
+    fireEvent.pointerDown(screen.getByLabelText("Reconnect end"), { button: 0, clientX: 200, clientY: 250, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 288, clientY: 250, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 288, clientY: 250, pointerId: 2 });
+    fireEvent.pointerDown(container.querySelector('[data-item-id="node"]')!, { button: 0, clientX: 350, clientY: 250, pointerId: 3 });
+    fireEvent.pointerMove(canvas, { clientX: 450, clientY: 250, pointerId: 3 });
+    fireEvent.pointerUp(canvas, { clientX: 450, clientY: 250, pointerId: 3 });
+    expect(container.querySelector(".item-drawing path")!.getAttribute("d")).toBe("M 5 5 L 355 5");
+  });
+
+  it.each(["Straight", "Curved", "Elbow"])("supports all arrowhead modes on %s connectors and their previews", (route) => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "a", kind: "shape", x: 0, y: 0, w: 100, h: 100, text: "A" },
+      { id: "b", kind: "shape", x: 300, y: 200, w: 100, h: 100, text: "B" },
+    ];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "c" });
+    fireEvent.click(screen.getByRole("button", { name: route }));
+    expect(screen.getByRole("button", { name: "One end" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Both ends" }));
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 112, clientY: 50, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 288, clientY: 250, pointerId: 1 });
+    const preview = container.querySelector('.connections > path[stroke="var(--selection)"]')!;
+    expect(preview.getAttribute("marker-start")).toBe("url(#arrow)");
+    expect(preview.getAttribute("marker-end")).toBe("url(#arrow)");
+    fireEvent.pointerUp(canvas, { clientX: 288, clientY: 250, pointerId: 1 });
+    const path = () => container.querySelector(".connector-line")!;
+    expect(path().getAttribute("marker-start")).toBe("url(#arrow)");
+    expect(path().getAttribute("marker-end")).toBe("url(#arrow)");
+    fireEvent.pointerDown(path(), { button: 0 });
+    fireEvent.click(screen.getByRole("button", { name: "None" }));
+    expect(path().getAttribute("marker-start")).toBeNull();
+    expect(path().getAttribute("marker-end")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "One end" }));
+    expect(path().getAttribute("marker-start")).toBeNull();
+    expect(path().getAttribute("marker-end")).toBe("url(#arrow)");
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(path().getAttribute("marker-end")).toBeNull();
+    expect(screen.getByRole("button", { name: "None" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps standalone connectors editable when arrowheads are set to None", () => {
+    const { container } = render(<App initial={seed()} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "c" });
+    fireEvent.click(screen.getByRole("button", { name: "None" }));
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 220, clientY: 120, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 220, clientY: 120, pointerId: 1 });
+    const path = () => container.querySelector(".item-drawing path")!;
+    expect(path().getAttribute("marker-start")).toBeNull();
+    expect(path().getAttribute("marker-end")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Both ends" }));
+    expect(path().getAttribute("marker-start")).toBe("url(#arrow)");
+    expect(path().getAttribute("marker-end")).toBe("url(#arrow)");
+  });
+
+  it("snaps routed connectors to elements, edits routes, reconnects endpoints, and follows moved elements", () => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "a", kind: "shape", x: 0, y: 0, w: 100, h: 100, text: "A" },
+      { id: "b", kind: "shape", x: 300, y: 200, w: 100, h: 100, text: "B" },
+      { id: "c", kind: "shape", x: 600, y: 200, w: 100, h: 100, text: "C" },
+    ];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "c" });
+    fireEvent.click(screen.getByRole("button", { name: "Elbow" }));
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 112, clientY: 50, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 288, clientY: 250, pointerId: 1 });
+    expect(container.querySelector('[data-item-id="b"]')!.classList.contains("snap-target")).toBe(true);
+    fireEvent.pointerUp(canvas, { clientX: 288, clientY: 250, pointerId: 1 });
+    const path = () => container.querySelector<SVGPathElement>(".connector-line")!;
+    expect(path().getAttribute("d")).toBe("M 100 50 L 200 50 L 200 250 L 300 250");
+    fireEvent.pointerDown(path(), { button: 0 });
+    fireEvent.click(screen.getByRole("button", { name: "Curved" }));
+    expect(path().getAttribute("d")).toContain(" C ");
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(path().getAttribute("d")).not.toContain(" C ");
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
+    expect(path().getAttribute("d")).toContain(" C ");
+    fireEvent.pointerDown(screen.getByLabelText("Reconnect end"), { button: 0, clientX: 300, clientY: 250, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 588, clientY: 250, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 588, clientY: 250, pointerId: 2 });
+    expect(path().getAttribute("d")).toBe("M 100 50 C 350 50 350 250 600 250");
+    fireEvent.pointerDown(screen.getByLabelText("Reconnect start"), { button: 0, clientX: 100, clientY: 50, pointerId: 4 });
+    fireEvent.pointerMove(canvas, { clientX: 900, clientY: 500, pointerId: 4 });
+    fireEvent.pointerUp(canvas, { clientX: 900, clientY: 500, pointerId: 4 });
+    expect(path().getAttribute("d")).toBe("M 100 50 C 350 50 350 250 600 250");
+    fireEvent.pointerDown(container.querySelector('[data-item-id="a"]')!, { button: 0, clientX: 50, clientY: 50, pointerId: 3 });
+    fireEvent.pointerMove(canvas, { clientX: 90, clientY: 50, pointerId: 3 });
+    fireEvent.pointerUp(canvas, { clientX: 90, clientY: 50, pointerId: 3 });
+    expect(path().getAttribute("d")).toBe("M 140 50 C 370 50 370 250 600 250");
+  });
+
+  it("keeps standalone arrows routed and supports cancelling a connector gesture", () => {
+    const { container } = render(<App initial={seed()} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "c" });
+    fireEvent.click(screen.getByRole("button", { name: "Curved" }));
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 220, clientY: 120, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 220, clientY: 120, pointerId: 1 });
+    expect(container.querySelector(".item-drawing path")!.getAttribute("d")).toContain(" C ");
+    fireEvent.keyDown(window, { key: "c" });
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 320, clientY: 20, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 520, clientY: 120, pointerId: 2 });
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.pointerUp(canvas, { clientX: 520, clientY: 120, pointerId: 2 });
+    expect(container.querySelectorAll(".item-drawing")).toHaveLength(1);
+  });
   it("copies and pastes connected selections through the system clipboard payload", () => {
     const initial = seed();
     initial.boards[0].items = [
@@ -136,7 +524,7 @@ describe("canvas workflow", () => {
       "value",
       "Untitled board",
     );
-    expect(screen.getAllByRole("button", { pressed: false })).toHaveLength(4);
+    expect(screen.getAllByRole("button", { pressed: false })).toHaveLength(5);
   });
   it("creates text at a double-click, saves it, and restores it after reload", async () => {
     const first = render(<App initial={seed()} />);
@@ -195,13 +583,6 @@ describe("canvas workflow", () => {
     expect(screen.getByText("A note")).toBeTruthy();
   });
   it("opens provider embeds directly and supports board search", () => {
-    // Keep provider requests out of DOM tests while checking the actual embed URL.
-    const createElement = document.createElement.bind(document);
-    vi.spyOn(document, "createElement").mockImplementation((tag, options) => {
-      const node = createElement(tag, options);
-      if (tag === "iframe") node.setAttribute("srcdoc", " ");
-      return node;
-    });
     render(<App initial={seed()} />);
     fireEvent.click(screen.getByRole("button", { name: "File" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Add a link…" }));
@@ -216,6 +597,18 @@ describe("canvas workflow", () => {
       "src",
       "https://www.instagram.com/reel/ABC/embed/",
     );
+    const frame = screen.getByTitle("Reference reel") as HTMLIFrameElement;
+    const player = new DOMParser().parseFromString(frame.srcdoc, "text/html");
+    expect(player.querySelector("blockquote")?.dataset.instgrmPermalink).toBe(
+      "https://www.instagram.com/reel/ABC/",
+    );
+    expect(player.querySelector("script[src]")?.getAttribute("src")).toBe(
+      "https://www.instagram.com/embed.js",
+    );
+    expect(frame.style.pointerEvents).toBe("none");
+    fireEvent.click(screen.getByRole("button", { name: "Interact with media" }));
+    expect(frame.style.pointerEvents).toBe("auto");
+    expect(frame.allow).toContain("autoplay");
     fireEvent.keyDown(window, { key: "f", ctrlKey: true });
     fireEvent.change(screen.getByLabelText("Find on board"), {
       target: { value: "Reference" },

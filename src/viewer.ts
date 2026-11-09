@@ -1,4 +1,5 @@
-import { type Board, embedUrl, connectionPoints } from "./model";
+import { type Board, embedUrl, connectionGeometry, drawingConnectorPath, connectorMarkers } from "./model";
+import { instagramEmbedDocument, instagramSandbox } from "./instagram";
 // Serialized into exported files. Keep this function independent of module scope.
 function viewer() {
   const data = JSON.parse(
@@ -6,6 +7,7 @@ function viewer() {
   );
   const board = data.board;
   const media = data.embeds as Record<string, string>;
+  const embedDocuments = data.embedDocuments as Record<string, string>;
   const stage = document.getElementById("stage")!,
     world = document.getElementById("world")!;
   let x = 0,
@@ -35,16 +37,15 @@ function viewer() {
   defs.append(marker);
   svg.append(defs);
   for (const line of data.lines) {
-    const el = document.createElementNS(ns, "line");
+    const el = document.createElementNS(ns, "path");
     Object.entries({
-      x1: line.a.x,
-      y1: line.a.y,
-      x2: line.b.x,
-      y2: line.b.y,
+      d: line.d,
+      fill: "none",
       stroke: "#888",
       "stroke-width": 2,
-      "marker-end": "url(#arrow)",
     }).forEach(([k, v]) => el.setAttribute(k, String(v)));
+    if (line.markerStart) el.setAttribute("marker-start", line.markerStart);
+    if (line.markerEnd) el.setAttribute("marker-end", line.markerEnd);
     svg.append(el);
   }
   world.append(svg);
@@ -75,6 +76,10 @@ function viewer() {
       if (media[i.id]) {
         const frame = document.createElement("iframe");
         frame.src = media[i.id];
+        if (embedDocuments[i.id]) {
+          frame.setAttribute("sandbox", data.instagramSandbox);
+          frame.srcdoc = embedDocuments[i.id];
+        }
         frame.title = i.text;
         frame.allow =
           "autoplay; encrypted-media; fullscreen; picture-in-picture";
@@ -99,16 +104,21 @@ function viewer() {
     } else if (i.kind === "drawing") {
       const s = document.createElementNS(ns, "svg");
       s.setAttribute("viewBox", `0 0 ${i.w} ${i.h}`);
-      const p = document.createElementNS(ns, "polyline");
+      const arrowPath = data.drawingPaths[i.id];
+      const p = document.createElementNS(ns, arrowPath ? "path" : "polyline");
       p.setAttribute(
-        "points",
-        i.points.map((p: number[]) => p.join(",")).join(" "),
+        arrowPath ? "d" : "points",
+        arrowPath || i.points.map((p: number[]) => p.join(",")).join(" "),
       );
       p.setAttribute("fill", "none");
       p.setAttribute("stroke", i.stroke || "#ddd");
       p.setAttribute("stroke-width", String(i.strokeWidth || 2));
       p.setAttribute("stroke-linecap", "round");
-      if (i.arrow) p.setAttribute("marker-end", "url(#arrow)");
+      if (i.arrow) {
+        const markers = data.drawingMarkers[i.id];
+        if (markers?.markerStart) p.setAttribute("marker-start", markers.markerStart);
+        if (markers?.markerEnd) p.setAttribute("marker-end", markers.markerEnd);
+      }
       s.append(p);
       el.append(s);
     } else {
@@ -206,12 +216,25 @@ export function shareHtml(board: Board) {
   const embeds = Object.fromEntries(
     board.items.map((i) => [i.id, embedUrl(i.src || "")]),
   );
+  const embedDocuments = Object.fromEntries(
+    board.items.flatMap((i) => {
+      const html = instagramEmbedDocument(i.src || "");
+      return html ? [[i.id, html]] : [];
+    }),
+  );
   const lines = board.connections.flatMap((c) => {
     const a = board.items.find((i) => i.id === c.from),
       b = board.items.find((i) => i.id === c.to);
-    return a && b ? [connectionPoints(a, b)] : [];
+    if (!a || !b) return [];
+    return [{ ...connectionGeometry(a, b, c.route), ...connectorMarkers(c.arrowheads) }];
   });
-  const data = JSON.stringify({ board, embeds, lines }).replace(
+  const drawingPaths = Object.fromEntries(board.items.flatMap((i) => {
+    if (!i.arrow || !i.points || i.points.length < 2) return [];
+    return [[i.id, drawingConnectorPath(i, board.items, true).d]];
+  }));
+  const drawingMarkers = Object.fromEntries(board.items.filter((i) => i.arrow)
+    .map((i) => [i.id, connectorMarkers(i.arrowheads)]));
+  const data = JSON.stringify({ board, embeds, embedDocuments, instagramSandbox, lines, drawingPaths, drawingMarkers }).replace(
     /</g,
     "\\u003c",
   );

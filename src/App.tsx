@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import type { PointerEvent as PE, CSSProperties } from "react";
 import {
   MousePointer2,
+  Hand,
   Type,
   PenLine,
   MoveUpRight,
@@ -42,6 +43,8 @@ import {
   type Workspace,
   type Item,
   type Point,
+  type ConnectorRoute,
+  type ConnectorArrowheads,
   uid,
   colors,
   strokes,
@@ -54,6 +57,15 @@ import {
   duplicateItems,
   bounds,
   connectionPoints,
+  connectionGeometry,
+  connectorPath,
+  connectorArrowheads,
+  connectorMarkers,
+  snapConnection,
+  arrowEndpoints,
+  positionArrow,
+  drawingConnectorPath,
+  updateArrowBindings,
   download,
   shareHtml,
   packageBoard,
@@ -63,8 +75,9 @@ import {
 import { readLegacy, saveWorkspace } from "./storage";
 import { exportPng } from "./exportPng";
 import { readTheme, saveTheme } from "./theme";
-type Tool = "select" | "text" | "draw" | "connect" | "shape";
-type Modal = "help" | "links" | "link" | "delete" | null;
+import { instagramEmbedDocument, instagramPermalink, instagramSandbox } from "./instagram";
+type Tool = "select" | "hand" | "text" | "draw" | "connect" | "shape";
+type Modal = "help" | "links" | "link" | "delete" | "reconnect" | null;
 type Gesture = {
   kind: "pan" | "drag" | "resize" | "draw" | "shape" | "connect" | "marquee";
   start: Point;
@@ -74,6 +87,10 @@ type Gesture = {
   origin: Point;
   points: number[][];
   from?: string;
+  connectionId?: string;
+  arrowId?: string;
+  fixedPoint?: Point;
+  endpoint?: "from" | "to";
   selection?: string[];
 };
 type BackupDirectory = {
@@ -89,7 +106,10 @@ type BackupDirectory = {
 };
 export default function App({ initial }: { initial?: Workspace }) {
   const [workspace, setWorkspace] = useState<Workspace>(
-    () => initial || readLegacy(),
+    () => {
+      const loaded = initial || readLegacy();
+      return { ...loaded, boards: loaded.boards.map((b) => updateArrowBindings(b, true)) };
+    },
   );
   const fallback = useRef(createBoard());
   const board =
@@ -98,6 +118,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     [tool, setTool] = useState<Tool>("select"),
     [locked, setLocked] = useState(false),
     [selected, setSelected] = useState<string[]>([]),
+    [interacting, setInteracting] = useState<string | null>(null),
     [editing, setEditing] = useState<string | null>(null);
   const [dark, setDark] = useState(
       () => readTheme() === "dark",
@@ -126,10 +147,18 @@ export default function App({ initial }: { initial?: Workspace }) {
     [future, setFuture] = useState<Board[]>([]),
     [preview, setPreview] = useState<Gesture | null>(null),
     [connecting, setConnecting] = useState<string | null>(null),
+    [route, setRoute] = useState<ConnectorRoute>("straight"),
+    [arrowheads, setArrowheads] = useState<ConnectorArrowheads>("one"),
+    [selectedConnection, setSelectedConnection] = useState<string | null>(null),
+    [snapTarget, setSnapTarget] = useState<string | null>(null),
     [context, setContext] = useState<Point | null>(null),
     [deleteId, setDeleteId] = useState(""),
     [busy, setBusy] = useState(false),
     [backup, setBackup] = useState(false);
+  const [reconnectDraft, setReconnectDraft] = useState<{
+    id: string; arrow: boolean; endpoint: "from" | "to"; target: string;
+  } | null>(null);
+  const reconnectHandle = useRef<SVGCircleElement | null>(null);
   const canvas = useRef<HTMLDivElement>(null),
     files = useRef<HTMLInputElement>(null),
     imports = useRef<HTMLInputElement>(null),
@@ -152,6 +181,9 @@ export default function App({ initial }: { initial?: Workspace }) {
   current.current = board;
   selection.current = selected;
   camera.current = { offset, zoom };
+  useEffect(() => {
+    if (interacting && (selected.length !== 1 || selected[0] !== interacting)) setInteracting(null);
+  }, [selected, interacting]);
   const toast = useCallback((text: string) => {
     setNotice(text);
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -159,9 +191,11 @@ export default function App({ initial }: { initial?: Workspace }) {
   }, []);
   const change = useCallback((next: Board, record = true) => {
     if (record) {
-      setHistory((h) => [...h.slice(-79), current.current]);
+      const previous = current.current;
+      setHistory((h) => [...h.slice(-79), previous]);
       setFuture([]);
     }
+    next = updateArrowBindings(next);
     current.current = next;
     setWorkspace((w) => ({
       ...w,
@@ -229,9 +263,12 @@ export default function App({ initial }: { initial?: Workspace }) {
     };
   };
   const chooseTool = (next: Tool) => {
+    setInteracting(null);
+    setSelectedConnection(null);
+    setSnapTarget(null);
     setTool(next);
     if (next !== tool) setLocked(false);
-    if (next !== "select") setSelected([]);
+    if (next !== "select" && next !== "hand") setSelected([]);
     setContext(null);
     setMenu(false);
     setConnecting(null);
@@ -279,6 +316,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     setZoom(z);
   };
   const openBoard = (id: string) => {
+    chooseTool("select");
     setWorkspace((w) => ({ ...w, active: id }));
     setGallery(false);
     setSelected([]);
@@ -291,6 +329,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     reset();
   };
   const newBoard = () => {
+    chooseTool("select");
     const b = createBoard();
     setWorkspace((w) => ({ boards: [...w.boards, b], active: b.id }));
     setGallery(false);
@@ -594,12 +633,6 @@ export default function App({ initial }: { initial?: Workspace }) {
     }, 600000);
     return () => clearInterval(timer);
   }, [backup]);
-  const hit = (p: Point) =>
-    [...current.current.items]
-      .reverse()
-      .find(
-        (i) => p.x >= i.x && p.x <= i.x + i.w && p.y >= i.y && p.y <= i.y + i.h,
-      );
   const begin = (
     kind: Gesture["kind"],
     e: PE,
@@ -622,11 +655,11 @@ export default function App({ initial }: { initial?: Workspace }) {
     canvas.current?.setPointerCapture?.(e.pointerId);
     setPreview(g);
   };
-  const down = (e: PE<HTMLDivElement>) => {
+  const down = (e: PE) => {
+    const pan = tool === "hand" || space || e.button === 1;
     if (
-      (e.target as HTMLElement)?.closest?.(
-        "button,input,textarea,a,iframe,video,audio,[data-ui]",
-      )
+      (e.target as HTMLElement)?.closest?.("[data-ui]") ||
+      (!pan && (e.target as HTMLElement)?.closest?.("button,input,textarea,a,iframe,video,audio"))
     )
       return;
     if (e.button !== 0 && e.button !== 1) return;
@@ -647,7 +680,10 @@ export default function App({ initial }: { initial?: Workspace }) {
     setMenu(false);
     setContext(null);
     setEditing(null);
-    if (space || e.button === 1) {
+    setInteracting(null);
+    if (pan) {
+      e.preventDefault();
+      setSnapTarget(null);
       begin("pan", e);
       return;
     }
@@ -664,11 +700,21 @@ export default function App({ initial }: { initial?: Workspace }) {
       return;
     }
     if (tool === "connect") {
-      begin("connect", e);
+      const source = snapConnection(board.items, point(e.clientX, e.clientY), 18 / zoom);
+      if (connecting && source && source.id !== connecting) {
+        change({ ...board, connections: [...board.connections, { id: uid(), from: connecting, to: source.id, route, arrowheads }] });
+        setConnecting(null);
+        setSnapTarget(null);
+        finishTool();
+      } else {
+        setConnecting(source?.id || null);
+        begin("connect", e, [], source?.id);
+      }
       return;
     }
     if ((e.target as HTMLElement)?.closest?.(".board-item")) return;
     setSelected(e.shiftKey ? selected : []);
+    setSelectedConnection(null);
     begin("marquee", e);
   };
   const itemDown = (e: PE, i: Item) => {
@@ -684,6 +730,11 @@ export default function App({ initial }: { initial?: Workspace }) {
       begin("pan", e);
       return;
     }
+    if (tool === "connect" && i.kind === "drawing" && i.arrow) {
+      e.stopPropagation();
+      down(e as PE<HTMLDivElement>);
+      return;
+    }
     if (tool === "connect") {
       e.stopPropagation();
       if (connecting && connecting !== i.id) {
@@ -691,10 +742,11 @@ export default function App({ initial }: { initial?: Workspace }) {
           ...board,
           connections: [
             ...board.connections,
-            { id: uid(), from: connecting, to: i.id },
+            { id: uid(), from: connecting, to: i.id, route, arrowheads },
           ],
         });
         setConnecting(null);
+        setSnapTarget(null);
         finishTool();
         return;
       }
@@ -703,6 +755,8 @@ export default function App({ initial }: { initial?: Workspace }) {
       return;
     }
     if (tool !== "select") return;
+    setInteracting(null);
+    setSelectedConnection(null);
     e.stopPropagation();
     setEditing(null);
     setContext(null);
@@ -718,6 +772,10 @@ export default function App({ initial }: { initial?: Workspace }) {
   };
   const move = (e: PE) => {
     lastPointer.current = point(e.clientX, e.clientY);
+    if ((tool === "connect" && !space && gesture.current?.kind !== "pan") || gesture.current?.kind === "connect") {
+      setSnapTarget(snapConnection(board.items, lastPointer.current, 18 / zoom,
+        gesture.current?.from || connecting || undefined)?.id || null);
+    }
     if (pointers.current.has(e.pointerId))
       pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pinch.current && pointers.current.size === 2) {
@@ -739,9 +797,10 @@ export default function App({ initial }: { initial?: Workspace }) {
     if (!g) return;
     const p = point(e.clientX, e.clientY);
     if (g.kind === "pan") {
+      const dx = e.clientX - g.origin.x, dy = e.clientY - g.origin.y;
       setOffset((o) => ({
-        x: o.x + e.clientX - g.origin.x,
-        y: o.y + e.clientY - g.origin.y,
+        x: o.x + dx,
+        y: o.y + dy,
       }));
       g.origin = { x: e.clientX, y: e.clientY };
       return;
@@ -811,6 +870,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     gesture.current = null;
     setPreview(null);
     if (!g) return;
+    if (g.kind === "connect") g.last = point(e.clientX, e.clientY);
     const dx = g.last.x - g.start.x,
       dy = g.last.y - g.start.y,
       moved = Math.hypot(dx, dy) > 3 / zoom;
@@ -857,14 +917,33 @@ export default function App({ initial }: { initial?: Workspace }) {
         },
       ]);
     }
-    if (g.kind === "connect" && moved) {
-      const to = hit(g.last);
+    if (g.kind === "connect" && (moved || g.connectionId || g.arrowId)) {
+      const to = snapConnection(board.items, point(e.clientX, e.clientY), 18 / zoom, g.from);
+      if (g.arrowId) {
+        const release = point(e.clientX, e.clientY);
+        change({ ...board, items: board.items.map((i) => {
+          if (i.id !== g.arrowId) return i;
+          const ends = arrowEndpoints(i);
+          if (g.endpoint === "from") ends.a = release;
+          else ends.b = release;
+          return positionArrow({ ...i, bindingsInitialized: true,
+            [g.endpoint === "from" ? "startBinding" : "endBinding"]: to?.id }, ends.a, ends.b);
+        }) });
+        setSnapTarget(null);
+        return;
+      }
+      if (g.connectionId) {
+        if (to) change({ ...board, connections: board.connections.map((c) =>
+          c.id === g.connectionId ? { ...c, [g.endpoint!]: to.id } : c) });
+        setSnapTarget(null);
+        return;
+      }
       if (g.from && to && to.id !== g.from) {
         change({
           ...board,
           connections: [
             ...board.connections,
-            { id: uid(), from: g.from, to: to.id },
+            { id: uid(), from: g.from, to: to.id, route, arrowheads },
           ],
         });
       } else {
@@ -882,6 +961,11 @@ export default function App({ initial }: { initial?: Workspace }) {
             stroke,
             strokeWidth: weight,
             arrow: true,
+            route,
+            arrowheads,
+            startBinding: g.from,
+            endBinding: to?.id,
+            bindingsInitialized: true,
             points: [
               [g.start.x - x, g.start.y - y],
               [g.last.x - x, g.last.y - y],
@@ -890,6 +974,7 @@ export default function App({ initial }: { initial?: Workspace }) {
         ]);
       }
       setConnecting(null);
+      setSnapTarget(null);
       finishTool();
     }
   };
@@ -916,9 +1001,34 @@ export default function App({ initial }: { initial?: Workspace }) {
     el.addEventListener("wheel", wheel, { passive: false });
     return () => el.removeEventListener("wheel", wheel);
   }, [gallery]);
+  const closeReconnect = () => {
+    setModal(null);
+    setReconnectDraft(null);
+    requestAnimationFrame(() => reconnectHandle.current?.focus());
+  };
+  const commitReconnect = () => {
+    if (!reconnectDraft) return;
+    const { id, arrow, endpoint, target } = reconnectDraft;
+    if (arrow) {
+      change({ ...board, items: board.items.map((i) => i.id === id ? {
+        ...i, bindingsInitialized: true,
+        [endpoint === "from" ? "startBinding" : "endBinding"]: target || undefined,
+      } : i) });
+    } else if (target) {
+      change({ ...board, connections: board.connections.map((c) => c.id === id ? { ...c, [endpoint]: target } : c) });
+    }
+    closeReconnect();
+  };
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (modal === "reconnect") {
+          e.preventDefault();
+          closeReconnect();
+          return;
+        }
+        gesture.current = null;
+        setPreview(null);
         setModal(null);
         setMenu(false);
         setSearchOpen(false);
@@ -949,6 +1059,7 @@ export default function App({ initial }: { initial?: Workspace }) {
         newBoard();
       } else if (mod && e.key.toLowerCase() === "a") {
         e.preventDefault();
+        setSelectedConnection(null);
         setSelected(board.items.map((i) => i.id));
       } else if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
@@ -970,6 +1081,10 @@ export default function App({ initial }: { initial?: Workspace }) {
         fit();
       } else if (mod && e.key === "c" && selected.length) {
         clipboard.current = board.items.filter((i) => selected.includes(i.id));
+      } else if (["Delete", "Backspace"].includes(e.key) && selectedConnection) {
+        e.preventDefault();
+        change({ ...board, connections: board.connections.filter((c) => c.id !== selectedConnection) });
+        setSelectedConnection(null);
       } else if (["Delete", "Backspace"].includes(e.key) && selected.length) {
         e.preventDefault();
         remove();
@@ -1006,12 +1121,13 @@ export default function App({ initial }: { initial?: Workspace }) {
       } else if (!mod) {
         const tools: Record<string, Tool> = {
           v: "select",
+          h: "hand",
           t: "text",
           p: "draw",
           c: "connect",
           s: "shape",
         };
-        if (tools[e.key]) chooseTool(tools[e.key]);
+        if (tools[e.key.toLowerCase()]) chooseTool(tools[e.key.toLowerCase()]);
         if (e.key === "?") setModal("help");
         if (e.key === "n") {
           setShape("note");
@@ -1200,6 +1316,39 @@ export default function App({ initial }: { initial?: Workspace }) {
     if (search && searchOpen) jump(0);
   }, [search]);
   const active = board.items.find((i) => i.id === selected[0]);
+  const selectedBounds = selected.length > 1 ? bounds(board.items.filter((i) => selected.includes(i.id))) : null;
+  const activeConnection = board.connections.find((c) => c.id === selectedConnection);
+  const reconnectItem = reconnectDraft?.arrow ? board.items.find((i) => i.id === reconnectDraft.id) : undefined;
+  const reconnectConnection = !reconnectDraft?.arrow ? board.connections.find((c) => c.id === reconnectDraft?.id) : undefined;
+  const reconnectFixed = reconnectDraft?.endpoint === "from"
+    ? reconnectItem?.endBinding || reconnectConnection?.to
+    : reconnectItem?.startBinding || reconnectConnection?.from;
+  const reconnectTargets = board.items.filter((i) => i.id !== reconnectFixed && !(i.kind === "drawing" && i.arrow));
+  const currentRoute = activeConnection ? activeConnection.route || "straight"
+    : active?.arrow ? active.route || "straight" : route;
+  const currentArrowheads = connectorArrowheads(activeConnection ? activeConnection.arrowheads
+    : active?.arrow ? active.arrowheads : arrowheads);
+  const previewArrowheads = preview?.connectionId
+    ? board.connections.find((c) => c.id === preview.connectionId)?.arrowheads
+    : preview?.arrowId ? board.items.find((i) => i.id === preview.arrowId)?.arrowheads : arrowheads;
+  const previewRoute = preview?.connectionId
+    ? board.connections.find((c) => c.id === preview.connectionId)?.route || "straight"
+    : preview?.arrowId ? board.items.find((i) => i.id === preview.arrowId)?.route || "straight" : route;
+  const previewSource = board.items.find((i) => i.id === preview?.from);
+  const previewTarget = board.items.find((i) => i.id === snapTarget);
+  const previewOther: Item | undefined = preview && (previewTarget || {
+    id: "preview", kind: "shape", text: "", ...preview.last, w: 1, h: 1,
+  }) || undefined;
+  const previewFixed: Item | undefined = previewSource || (preview?.fixedPoint ? {
+    id: "fixed", kind: "shape", text: "", x: preview.fixedPoint.x - 0.5, y: preview.fixedPoint.y - 0.5, w: 1, h: 1,
+  } : undefined);
+  const previewPath = previewFixed && previewOther
+    ? connectionGeometry(
+      preview?.endpoint === "from" ? previewOther : previewFixed,
+      preview?.endpoint === "from" ? previewFixed : previewOther,
+      previewRoute,
+    ).d
+    : connectorPath(preview?.start || { x: 0, y: 0 }, preview?.last || { x: 0, y: 0 }, previewRoute).d;
   const textStyle = (i: Item): CSSProperties => ({
     fontSize: i.fontSize || 20,
     fontWeight: i.bold ? 700 : 400,
@@ -1209,11 +1358,13 @@ export default function App({ initial }: { initial?: Workspace }) {
   });
   const toolButtons = [
     { id: "select", Icon: MousePointer2, label: "Select", key: "V" },
+    { id: "hand", Icon: Hand, label: "Hand", key: "H" },
     { id: "text", Icon: Type, label: "Text", key: "T" },
     { id: "draw", Icon: PenLine, label: "Draw", key: "P" },
     { id: "connect", Icon: MoveUpRight, label: "Connector", key: "C" },
     { id: "shape", Icon: Shapes, label: "Shapes", key: "S" },
   ] as const;
+  const effectiveTool = tool === "hand" || space || preview?.kind === "pan" ? "hand" : tool;
   return (
     <div className="app">
       <header className="topbar">
@@ -1400,8 +1551,20 @@ export default function App({ initial }: { initial?: Workspace }) {
       ) : (
         <main
           ref={canvas}
-          className={`canvas tool-${tool} ${space ? "panning" : ""}`}
+          className={`canvas tool-${tool} ${effectiveTool === "hand" ? "panning" : ""} ${preview?.kind === "pan" ? "is-panning" : ""} ${preview?.kind === "drag" ? "is-dragging" : ""}`}
+          onPointerDownCapture={(e) => {
+            if ((e.button !== 0 && e.button !== 1) ||
+                (e.target as HTMLElement)?.closest?.("[data-ui]")) return;
+            if (tool === "hand" || space || e.button === 1) {
+              // Capture panning before item, link, media, or endpoint handlers.
+              e.stopPropagation();
+              down(e);
+            }
+          }}
           onPointerDown={down}
+          onAuxClickCapture={(e) => {
+            if (e.button === 1 && !(e.target as HTMLElement)?.closest?.("[data-ui]")) e.preventDefault();
+          }}
           onPointerMove={move}
           onPointerUp={up}
           onPointerCancel={(e) => {
@@ -1468,33 +1631,47 @@ export default function App({ initial }: { initial?: Workspace }) {
                 const a = board.items.find((i) => i.id === c.from),
                   b = board.items.find((i) => i.id === c.to);
                 if (!a || !b) return null;
-                const p = connectionPoints(a, b);
+                const p = connectionGeometry(a, b, c.route);
                 return (
-                  <line
+                  <g
                     key={c.id}
-                    x1={p.a.x}
-                    y1={p.a.y}
-                    x2={p.b.x}
-                    y2={p.b.y}
-                    markerEnd="url(#arrow)"
-                    className="connector-line"
-                    onDoubleClick={() =>
-                      change({
-                        ...board,
-                        connections: board.connections.filter(
-                          (x) => x.id !== c.id,
-                        ),
-                      })
-                    }
-                  />
+                    onPointerDown={(e) => {
+                      if (tool !== "select" || space) return;
+                      e.stopPropagation();
+                      setSelected([]);
+                      setSelectedConnection(c.id);
+                    }}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      change({ ...board, connections: board.connections.filter((x) => x.id !== c.id) });
+                      setSelectedConnection(null);
+                    }}
+                  >
+                    <path data-connection-id={c.id} d={p.d} {...connectorMarkers(c.arrowheads)} fill="none"
+                      className={`connector-line ${selectedConnection === c.id ? "selected" : ""}`} />
+                    <path d={p.d} className="connector-hit" />
+                  </g>
                 );
               })}
             </svg>
+            {selectedBounds && tool === "select" && (
+              <div className="group-selection" aria-label="Drag selected elements"
+                style={{ left: selectedBounds.x - 6, top: selectedBounds.y - 6,
+                  width: selectedBounds.w + 12, height: selectedBounds.h + 12 }}
+                onPointerDown={(e) => {
+                  if (e.button !== 0 || e.shiftKey) return;
+                  e.stopPropagation();
+                  setInteracting(null);
+                  setEditing(null);
+                  begin("drag", e, selected);
+                }}
+                onDoubleClick={(e) => e.stopPropagation()} />
+            )}
             {board.items.map((i) => (
               <div
                 key={i.id}
                 data-item-id={i.id}
-                className={`board-item item-${i.kind} ${selected.includes(i.id) ? "selected" : ""} ${connecting === i.id ? "connecting" : ""} ${search && !i.text.toLowerCase().includes(search.toLowerCase()) ? "dimmed" : ""}`}
+                className={`board-item item-${i.kind} ${selected.includes(i.id) ? "selected" : ""} ${connecting === i.id ? "connecting" : ""} ${snapTarget === i.id ? "snap-target" : ""} ${search && !i.text.toLowerCase().includes(search.toLowerCase()) ? "dimmed" : ""}`}
                 style={{
                   left: i.x,
                   top: i.y,
@@ -1515,6 +1692,11 @@ export default function App({ initial }: { initial?: Workspace }) {
                 onPointerDown={(e) => itemDown(e, i)}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
+                  if (tool !== "select" || space) return;
+                  if (["link", "video", "audio"].includes(i.kind)) {
+                    setSelected([i.id]);
+                    setInteracting(i.id);
+                  }
                   if (["text", "note", "shape"].includes(i.kind)) {
                     setSelected([i.id]);
                     setEditing(i.id);
@@ -1572,15 +1754,19 @@ export default function App({ initial }: { initial?: Workspace }) {
                   ))}
                 {i.kind === "drawing" && (
                   <svg viewBox={`0 0 ${i.w} ${i.h}`} preserveAspectRatio="none">
-                    <polyline
-                      points={i.points?.map((p) => p.join(",")).join(" ")}
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={i.strokeWidth || 2}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      markerEnd={i.arrow ? "url(#arrow)" : undefined}
-                    />
+                    {i.arrow && i.points && i.points.length > 1 ? (
+                      <path
+                        d={drawingConnectorPath(i, board.items, true).d}
+                        fill="none" stroke="currentColor" strokeWidth={i.strokeWidth || 2}
+                        strokeLinecap="round" strokeLinejoin="round" {...connectorMarkers(i.arrowheads)}
+                      />
+                    ) : (
+                      <polyline
+                        points={i.points?.map((p) => p.join(",")).join(" ")}
+                        fill="none" stroke="currentColor" strokeWidth={i.strokeWidth || 2}
+                        strokeLinecap="round" strokeLinejoin="round"
+                      />
+                    )}
                   </svg>
                 )}
                 {i.kind === "link" && (
@@ -1588,13 +1774,16 @@ export default function App({ initial }: { initial?: Workspace }) {
                     {embedUrl(i.src || "") ? (
                       <iframe
                         src={embedUrl(i.src || "")!}
+                        srcDoc={instagramEmbedDocument(i.src || "")}
+                        sandbox={instagramPermalink(i.src || "") ? instagramSandbox : undefined}
                         title={i.text}
                         loading="lazy"
                         allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
                         allowFullScreen
                         style={{
                           pointerEvents:
-                            tool === "select" && !space ? "auto" : "none",
+                            tool === "select" && !space && preview?.kind !== "pan" &&
+                            (!selected.includes(i.id) || interacting === i.id) ? "auto" : "none",
                         }}
                       />
                     ) : (
@@ -1606,7 +1795,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                         </a>
                       </div>
                     )}
-                    <div className="embed-footer">
+                    <div className="embed-footer" title="Middle-drag this footer to pan. Use Hand mode to pan over the player.">
                       <span>{i.src?.replace(/^https?:\/\/(www\.)?/, "")}</span>
                       <a
                         href={i.src}
@@ -1621,6 +1810,20 @@ export default function App({ initial }: { initial?: Workspace }) {
                 )}
                 {selected.includes(i.id) && (
                   <>
+                    {["link", "video", "audio"].includes(i.kind) && tool === "select" && (
+                      <>
+                        {interacting !== i.id && <div className="media-drag-surface" aria-label={`Drag ${i.text || "media"}`} />}
+                        <button className="media-interact" aria-label={interacting === i.id ? "Done interacting" : "Interact with media"}
+                          onClick={() => {
+                            setSelected([i.id]);
+                            setInteracting(interacting === i.id ? null : i.id);
+                          }}>{interacting === i.id ? "Done interacting" : "Interact"}</button>
+                      </>
+                    )}
+                    {tool === "select" && <div className="selection-drag-frame" aria-label="Drag selected element">
+                      <span className="drag-edge top" /><span className="drag-edge right" />
+                      <span className="drag-edge bottom" /><span className="drag-edge left" />
+                    </div>}
                     <span className="selection-handle tl" />
                     <span className="selection-handle tr" />
                     <span className="selection-handle bl" />
@@ -1659,26 +1862,52 @@ export default function App({ initial }: { initial?: Workspace }) {
                 }}
               />
             )}
+            {(activeConnection || active?.arrow) && !preview && (() => {
+              const a = board.items.find((i) => i.id === activeConnection?.from);
+              const b = board.items.find((i) => i.id === activeConnection?.to);
+              if (activeConnection && (!a || !b)) return null;
+              const ends = activeConnection ? connectionPoints(a!, b!, activeConnection.route) : arrowEndpoints(active!);
+              return <svg className="connections connector-handles">
+                {(["from", "to"] as const).map((endpoint) => {
+                  const p = endpoint === "from" ? ends.a : ends.b;
+                  return <circle key={endpoint} cx={p.x} cy={p.y} r={6 / zoom}
+                    className="connector-endpoint" aria-label={`Reconnect ${endpoint === "from" ? "start" : "end"}`}
+                    role="button" tabIndex={0} aria-haspopup="dialog"
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter" && e.key !== " ") return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      reconnectHandle.current = e.currentTarget;
+                      setReconnectDraft({ id: activeConnection?.id || active!.id, arrow: !activeConnection, endpoint,
+                        target: activeConnection ? activeConnection[endpoint]
+                          : (endpoint === "from" ? active!.startBinding : active!.endBinding) || "" });
+                      setModal("reconnect");
+                    }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      const fixed = activeConnection
+                        ? endpoint === "from" ? activeConnection.to : activeConnection.from
+                        : endpoint === "from" ? active!.endBinding : active!.startBinding;
+                      begin("connect", e, [], fixed);
+                      gesture.current!.connectionId = activeConnection?.id;
+                      gesture.current!.arrowId = activeConnection ? undefined : active!.id;
+                      gesture.current!.fixedPoint = endpoint === "from" ? ends.b : ends.a;
+                      gesture.current!.endpoint = endpoint;
+                      setPreview({ ...gesture.current! });
+                    }} />;
+                })}
+              </svg>;
+            })()}
             {preview && ["draw", "connect"].includes(preview.kind) && (
               <svg className="connections">
-                <polyline
-                  points={(preview.kind === "draw"
-                    ? preview.points
-                    : [
-                        [preview.start.x, preview.start.y],
-                        [preview.last.x, preview.last.y],
-                      ]
-                  )
-                    .map((p) => p.join(","))
-                    .join(" ")}
-                  fill="none"
-                  stroke={stroke}
-                  strokeWidth={weight}
-                  strokeLinecap="round"
-                  markerEnd={
-                    preview.kind === "connect" ? "url(#arrow)" : undefined
-                  }
-                />
+                {preview.kind === "connect" ? (
+                  <path d={previewPath}
+                    fill="none" stroke="var(--selection)" strokeWidth={weight}
+                    strokeLinecap="round" strokeLinejoin="round" {...connectorMarkers(previewArrowheads)} />
+                ) : (
+                  <polyline points={preview.points.map((p) => p.join(",")).join(" ")}
+                    fill="none" stroke={stroke} strokeWidth={weight} strokeLinecap="round" />
+                )}
               </svg>
             )}
           </div>
@@ -1693,12 +1922,57 @@ export default function App({ initial }: { initial?: Workspace }) {
             tool === "draw" ||
             tool === "connect" ||
             tool === "text" ||
-            selected.length > 0) && (
+            selected.length > 0 || activeConnection) && (
             <div
               className="properties"
               data-ui
               onPointerDown={(e) => e.stopPropagation()}
             >
+              {(tool === "connect" || activeConnection || active?.arrow) && (
+                <div className="property-row connector-routes" role="group" aria-label="Connector route">
+                  {(["straight", "curved", "elbow"] as const).map((value) => (
+                    <button key={value} aria-label={`${value[0].toUpperCase()}${value.slice(1)}`}
+                      aria-pressed={currentRoute === value}
+                      className={currentRoute === value ? "active" : ""}
+                      onClick={() => {
+                        setRoute(value);
+                        if (activeConnection) change({ ...board, connections: board.connections.map((c) =>
+                          c.id === activeConnection.id ? { ...c, route: value } : c) });
+                        else if (active?.arrow) update({ route: value });
+                      }}>
+                      <svg viewBox="0 0 24 18" width="24" height="18" aria-hidden="true">
+                        <path d={connectorPath({ x: 2, y: 3 }, { x: 22, y: 15 }, value).d}
+                          fill="none" stroke="currentColor" strokeWidth="1.5" />
+                      </svg>
+                      {value[0].toUpperCase()}{value.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {(tool === "connect" || activeConnection || active?.arrow) && (
+                <div className="property-row connector-routes" role="group" aria-label="Connector arrowheads">
+                  {([
+                    { value: "one", label: "One end" },
+                    { value: "both", label: "Both ends" },
+                    { value: "none", label: "None" },
+                  ] as const).map(({ value, label }) => (
+                    <button key={value} aria-label={label} aria-pressed={currentArrowheads === value}
+                      className={currentArrowheads === value ? "active" : ""}
+                      onClick={() => {
+                        setArrowheads(value);
+                        if (activeConnection) change({ ...board, connections: board.connections.map((c) =>
+                          c.id === activeConnection.id ? { ...c, arrowheads: value } : c) });
+                        else if (active?.arrow) update({ arrowheads: value });
+                      }}>
+                      <svg viewBox="0 0 24 18" width="24" height="18" aria-hidden="true">
+                        <path d={`M 3 9 H 21${value !== "none" ? " M 17 5 L 21 9 L 17 13" : ""}${value === "both" ? " M 7 5 L 3 9 L 7 13" : ""}`}
+                          fill="none" stroke="currentColor" strokeWidth="1.5" />
+                      </svg>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
               {tool === "shape" && (
                 <>
                   <div className="property-row">
@@ -1909,18 +2183,18 @@ export default function App({ initial }: { initial?: Workspace }) {
             {toolButtons.map((t) => (
               <button
                 key={t.id}
-                className={tool === t.id ? "active" : ""}
+                className={effectiveTool === t.id ? "active" : ""}
                 aria-label={t.label}
-                aria-pressed={tool === t.id}
-                title={`${t.label} (${t.key}), double-click to lock`}
+                aria-pressed={effectiveTool === t.id}
+                title={`${t.label} (${t.key})${t.id === "hand" || t.id === "select" ? "" : ", double-click to lock"}`}
                 onClick={() => chooseTool(t.id)}
                 onDoubleClick={() => {
                   chooseTool(t.id);
-                  setLocked(!locked);
+                  if (t.id !== "hand" && t.id !== "select") setLocked(!locked);
                 }}
               >
                 <t.Icon size={19} />
-                {locked && tool === t.id && (
+                {locked && effectiveTool === t.id && t.id !== "hand" && t.id !== "select" && (
                   <LockKeyhole className="locked" size={8} />
                 )}
               </button>
@@ -2157,6 +2431,7 @@ export default function App({ initial }: { initial?: Workspace }) {
             )}
             <button
               onClick={() => {
+                setSelectedConnection(null);
                 setSelected(board.items.map((i) => i.id));
                 setContext(null);
               }}
@@ -2178,7 +2453,7 @@ export default function App({ initial }: { initial?: Workspace }) {
         <div
           className="modal-backdrop"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setModal(null);
+            if (e.target === e.currentTarget) modal === "reconnect" ? closeReconnect() : setModal(null);
           }}
         >
           <section
@@ -2186,7 +2461,7 @@ export default function App({ initial }: { initial?: Workspace }) {
             role="dialog"
             aria-modal="true"
             aria-label={
-              modal === "help"
+              modal === "reconnect" ? "Reconnect endpoint" : modal === "help"
                 ? "Keyboard shortcuts"
                 : modal === "delete"
                   ? "Delete board"
@@ -2194,26 +2469,55 @@ export default function App({ initial }: { initial?: Workspace }) {
                     ? "Import links"
                     : "Add a link"
             }
+            onKeyDown={(e) => {
+              if (modal !== "reconnect" || e.key !== "Tab") return;
+              const controls = [...e.currentTarget.querySelectorAll<HTMLElement>("button,select")];
+              const next = controls.indexOf(document.activeElement as HTMLElement) + (e.shiftKey ? -1 : 1);
+              if (next < 0 || next >= controls.length) {
+                e.preventDefault();
+                controls[next < 0 ? controls.length - 1 : 0]?.focus();
+              }
+            }}
           >
             <button
               className="modal-close"
               aria-label="Close dialog"
-              onClick={() => setModal(null)}
+              onClick={() => modal === "reconnect" ? closeReconnect() : setModal(null)}
             >
               <X size={18} />
             </button>
+            {modal === "reconnect" && reconnectDraft && (
+              <form onSubmit={(e) => { e.preventDefault(); commitReconnect(); }}>
+                <h2>Reconnect {reconnectDraft.endpoint === "from" ? "start" : "end"}</h2>
+                <p>Choose an element, then apply. Press Escape to cancel.</p>
+                <label htmlFor="attachment-target">Attach to element</label>
+                <select id="attachment-target" autoFocus value={reconnectDraft.target}
+                  onChange={(e) => setReconnectDraft({ ...reconnectDraft, target: e.target.value })}>
+                  {reconnectDraft.arrow && <option value="">No attachment</option>}
+                  {reconnectTargets.map((i, index) => <option key={i.id} value={i.id}>
+                    {i.text.trim().slice(0, 60) || `${i.kind} ${index + 1}`}
+                  </option>)}
+                </select>
+                <div className="dialog-actions">
+                  <button type="button" onClick={closeReconnect}>Cancel</button>
+                  <button type="submit" className="primary">Apply connection</button>
+                </div>
+              </form>
+            )}
             {modal === "help" && (
               <>
                 <h2>Keyboard shortcuts</h2>
                 <div className="shortcut-grid">
                   {[
                     ["Select", "V"],
+                    ["Hand", "H"],
                     ["Text", "T"],
                     ["Draw", "P"],
                     ["Connector", "C"],
                     ["Shapes", "S"],
                     ["Sticky note", "N"],
                     ["Pan from any tool", "Space + drag"],
+                    ["Temporary Hand mode", "Middle mouse + drag"],
                     ["Select all", "⌘ / Ctrl A"],
                     ["Undo", "⌘ / Ctrl Z"],
                     ["Redo", "⇧ ⌘ / Ctrl Z"],
