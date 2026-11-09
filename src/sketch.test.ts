@@ -22,3 +22,15 @@ describe("sketch rendering", () => {
     expect(shapePaths(board.items[0]).length).toBeGreaterThan(1);
   });
 });
+
+describe("large shape hatch density", () => {
+  it.each(["rectangle", "ellipse"] as const)("bounds hatch strokes for a maximum-size %s", (shape) => {
+    const paths = shapePaths({ id: "large", kind: "shape", text: "", x: 0, y: 0,
+      w: 20000, h: 20000, shape, color: "#a5d8ff", stroke: "#0a0a0a" });
+    const hatch = paths.find((p) => p.stroke === "#a5d8ff")!;
+    expect(hatch).toBeDefined();
+    const curves = hatch.d.match(/C/g) || [];
+    expect(curves.length).toBeGreaterThan(0);
+    expect(curves.length).toBeLessThan(400);
+  });
+});

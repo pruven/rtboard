@@ -94,6 +94,8 @@ type Gesture = {
   endpoint?: "from" | "to";
   selection?: string[];
   undoBefore?: Board;
+  duplicate?: boolean;
+  axis?: "x" | "y";
 };
 type BackupDirectory = {
   getFileHandle: (
@@ -657,6 +659,15 @@ export default function App({ initial }: { initial?: Workspace }) {
     canvas.current?.setPointerCapture?.(e.pointerId);
     setPreview(g);
   };
+  const cancelGesture = () => {
+    const g = gesture.current;
+    if (g && ["drag", "resize"].includes(g.kind)) {
+      change(g.undoBefore || g.before, false);
+      if (g.undoBefore) setSelected([]);
+    }
+    gesture.current = null;
+    setPreview(null);
+  };
   const down = (e: PE) => {
     const pan = tool === "hand" || space || e.button === 1;
     if (
@@ -675,8 +686,7 @@ export default function App({ initial }: { initial?: Workspace }) {
         offset,
         world: point(mid.x, mid.y),
       };
-      gesture.current = null;
-      setPreview(null);
+      cancelGesture();
       return;
     }
     setMenu(false);
@@ -770,14 +780,8 @@ export default function App({ initial }: { initial?: Workspace }) {
         ? selected
         : [i.id];
     setSelected(ids);
-    if (e.altKey) {
-      const result = duplicateItems(board, ids, 0);
-      change(result.board, false);
-      setSelected(result.ids);
-      begin("drag", e, result.ids);
-      gesture.current!.before = result.board;
-      gesture.current!.undoBefore = board;
-    } else begin("drag", e, ids);
+    begin("drag", e, ids);
+    gesture.current!.duplicate = e.altKey;
   };
   const move = (e: PE) => {
     lastPointer.current = point(e.clientX, e.clientY);
@@ -823,10 +827,20 @@ export default function App({ initial }: { initial?: Workspace }) {
     if (g.kind === "drag") {
       let dx = (e.clientX - g.origin.x) / zoom,
         dy = (e.clientY - g.origin.y) / zoom;
-      if (e.shiftKey) {
-        if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
-        else dx = 0;
+      const pastThreshold = Math.hypot(dx, dy) > 3 / zoom;
+      if (g.duplicate && !g.undoBefore) {
+        if (!pastThreshold) return;
+        const result = duplicateItems(g.before, g.ids, 0);
+        g.undoBefore = g.before;
+        g.before = result.board;
+        g.ids = result.ids;
+        setSelected(result.ids);
       }
+      if (e.shiftKey) {
+        if (!g.axis && pastThreshold) g.axis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+        if (g.axis === "x") dy = 0;
+        else if (g.axis === "y") dx = 0;
+      } else g.axis = undefined;
       change(
         {
           ...g.before,
@@ -1045,10 +1059,7 @@ export default function App({ initial }: { initial?: Workspace }) {
           closeReconnect();
           return;
         }
-        if (gesture.current && ["drag", "resize"].includes(gesture.current.kind))
-          change(gesture.current.undoBefore || gesture.current.before, false);
-        gesture.current = null;
-        setPreview(null);
+        cancelGesture();
         setModal(null);
         setMenu(false);
         setSearchOpen(false);
@@ -1181,8 +1192,7 @@ export default function App({ initial }: { initial?: Workspace }) {
       setSpace(false);
       pointers.current.clear();
       pinch.current = null;
-      gesture.current = null;
-      setPreview(null);
+      cancelGesture();
     };
     window.addEventListener("keydown", key);
     window.addEventListener("keyup", release);
@@ -1608,8 +1618,7 @@ export default function App({ initial }: { initial?: Workspace }) {
           onPointerCancel={(e) => {
             pointers.current.delete(e.pointerId);
             pinch.current = null;
-            gesture.current = null;
-            setPreview(null);
+            cancelGesture();
           }}
           onDoubleClick={(e) => {
             if (
@@ -1662,7 +1671,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                   markerHeight="7"
                   orient="auto-start-reverse"
                 >
-                  <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="context-stroke" strokeOpacity="1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 </marker>
               </defs>
               {board.connections.map((c) => {
@@ -1673,6 +1682,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                 return (
                   <g
                     key={c.id}
+                    style={{ color: selectedConnection === c.id ? "var(--selection)" : undefined }}
                     onPointerDown={(e) => {
                       if (tool !== "select" || space) return;
                       e.stopPropagation();
@@ -1687,7 +1697,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                   >
                     <path data-connection-id={c.id} data-geometry={p.d} d={sketchPath(p.d, c.id)} fill="none"
                       className={`connector-line ${selectedConnection === c.id ? "selected" : ""}`} />
-                    <path d={p.d} fill="none" stroke="transparent" strokeWidth="2" {...connectorMarkers(c.arrowheads)} />
+                    <path d={p.d} fill="none" stroke="currentColor" strokeOpacity="0" strokeWidth="2" {...connectorMarkers(c.arrowheads)} />
                     <path d={p.d} className="connector-hit" />
                   </g>
                 );
@@ -1805,7 +1815,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                         fill="none" stroke="currentColor" strokeWidth={i.strokeWidth || 2}
                         strokeLinecap="round" strokeLinejoin="round"
                       />
-                      <path d={drawingConnectorPath(i, board.items, true).d} fill="none" stroke="transparent"
+                      <path d={drawingConnectorPath(i, board.items, true).d} fill="none" stroke="currentColor" strokeOpacity="0"
                         strokeWidth={i.strokeWidth || 2} {...connectorMarkers(i.arrowheads)} />
                       </>
                     ) : (
@@ -1900,8 +1910,8 @@ export default function App({ initial }: { initial?: Workspace }) {
                   ...(preview.kind === "shape"
                     ? {
                         background:
-                          shape === "note" && fill === "transparent"
-                            ? colors[0]
+                          shape === "note"
+                            ? (fill === "transparent" ? colors[0] : fill)
                             : "transparent",
                         borderRadius: shape === "ellipse" ? "50%" : 4,
                       }

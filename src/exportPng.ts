@@ -105,6 +105,10 @@ export async function exportPng(board: Board, dark: boolean) {
         ctx.stroke(path);
       }
       ctx.restore();
+      // Keep sketch edges free to overshoot, but contain the shape's label.
+      ctx.beginPath();
+      ctx.rect(i.x, i.y, i.w, i.h);
+      ctx.clip();
       text(i, 18, ink);
     } else if (i.kind === "note") {
       ctx.beginPath();

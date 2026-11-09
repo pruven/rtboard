@@ -35,7 +35,8 @@ function viewer() {
   const tip = document.createElementNS(ns, "path");
   tip.setAttribute("d", "M 0 0 L 10 5 L 0 10");
   tip.setAttribute("fill", "none");
-  tip.setAttribute("stroke", "currentColor");
+  tip.setAttribute("stroke", "context-stroke");
+  tip.setAttribute("stroke-opacity", "1");
   tip.setAttribute("stroke-width", "1.5");
   marker.append(tip);
   defs.append(marker);
@@ -52,7 +53,8 @@ function viewer() {
     const tips = document.createElementNS(ns, "path");
     tips.setAttribute("d", line.d);
     tips.setAttribute("fill", "none");
-    tips.setAttribute("stroke", "transparent");
+    tips.setAttribute("stroke", "currentColor");
+    tips.setAttribute("stroke-opacity", "0");
     tips.setAttribute("stroke-width", "2");
     tips.style.color = "#888";
     if (line.markerStart) tips.setAttribute("marker-start", line.markerStart);
@@ -131,7 +133,8 @@ function viewer() {
         const tips = document.createElementNS(ns, "path");
         tips.setAttribute("d", data.drawingPaths[i.id]);
         tips.setAttribute("fill", "none");
-        tips.setAttribute("stroke", "transparent");
+        tips.setAttribute("stroke", "currentColor");
+        tips.setAttribute("stroke-opacity", "0");
         tips.setAttribute("stroke-width", String(i.strokeWidth || 2));
         tips.style.color = i.stroke || "#ddd";
         if (markers?.markerStart) tips.setAttribute("marker-start", markers.markerStart);

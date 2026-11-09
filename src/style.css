@@ -429,10 +429,13 @@ button svg {
   color: var(--muted);
 }
 .connector-line {
-  stroke: var(--muted);
+  stroke: currentColor;
   stroke-width: 2;
   pointer-events: stroke;
   cursor: pointer;
+}
+.connections g:hover {
+  color: var(--selection);
 }
 .connections g:hover .connector-line {
   stroke: var(--selection);

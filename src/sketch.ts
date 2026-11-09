@@ -19,7 +19,8 @@ export function shapePaths(i: Item) {
     seed: sketchSeed(i.id), roughness: 0.85, bowing: 1,
     stroke: i.stroke || "transparent", strokeWidth: i.strokeWidth || 2,
     fill: i.color && i.color !== "transparent" ? i.color : undefined,
-    fillStyle: "hachure", hachureGap: 7, fillWeight: 0.5,
+    // Bound hatch density even for the largest imported shapes.
+    fillStyle: "hachure", hachureGap: Math.max(7, Math.hypot(i.w, i.h) / 160), fillWeight: 0.5,
   };
   return generator.toPaths(i.shape === "ellipse"
     ? generator.ellipse(i.w / 2, i.h / 2, Math.max(1, i.w - 4), Math.max(1, i.h - 4), options)

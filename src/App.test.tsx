@@ -653,8 +653,11 @@ describe("sketch canvas interactions", () => {
     const editor = screen.getByLabelText("Edit text");
     expect(document.activeElement).toBe(editor);
     expect(container.querySelector(".item-text")!.contains(editor)).toBe(true);
-    fireEvent.keyDown(window, { key: "t", repeat: true });
-    fireEvent.keyDown(editor, { key: "t" });
+    for (const repeat of [false, true]) {
+      const key = new KeyboardEvent("keydown", { key: "t", repeat, bubbles: true, cancelable: true });
+      expect(fireEvent(editor, key)).toBe(true);
+      expect(key.defaultPrevented).toBe(false);
+    }
     fireEvent.change(editor, { target: { value: "text" } });
     expect(container.querySelectorAll(".item-text")).toHaveLength(1);
     expect(editor).toHaveProperty("value", "text");
@@ -666,7 +669,7 @@ describe("sketch canvas interactions", () => {
     expect(next.style.top).toBe("160px");
   });
 
-  it("constrains shapes, draws sketch strokes, and supports ellipse shortcuts", () => {
+  it("constrains shapes, draws sketch outlines, and supports ellipse shortcuts", () => {
     const { container } = render(<App initial={seed()} />);
     const canvas = container.querySelector(".canvas")!;
     fireEvent.keyDown(window, { key: "r" });
@@ -680,6 +683,97 @@ describe("sketch canvas interactions", () => {
     expect(shape.style.fontFamily).toContain("Kalam");
     fireEvent.keyDown(window, { key: "o" });
     expect(screen.getByRole("button", { name: "Ellipse" }).classList.contains("active")).toBe(true);
+  });
+
+  it("samples a pen gesture and renders a smooth path through the canvas", () => {
+    const { container } = render(<App initial={seed()} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "p" });
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 40, clientY: 50, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 60, clientY: 80, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 100, clientY: 90, pointerId: 1 });
+    expect(container.querySelector(".connections > path")!.getAttribute("d"))
+      .toBe("M 40 50 Q 60 80 80 85 L 100 90");
+    fireEvent.pointerUp(canvas, { clientX: 100, clientY: 90, pointerId: 1 });
+    const drawing = container.querySelector<HTMLElement>(".item-drawing")!;
+    expect(drawing.style.left).toBe("36px");
+    expect(drawing.style.top).toBe("46px");
+    expect(drawing.querySelector("path")!.getAttribute("d")).toBe("M 4 4 Q 24 34 44 39 L 64 44");
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(container.querySelector(".item-drawing")).toBeNull();
+  });
+
+  it("shows the chosen sticky-note fill during drawing", () => {
+    const { container } = render(<App initial={seed()} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "n" });
+    fireEvent.click(screen.getByRole("button", { name: "Fill #a5d8ff" }));
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 40, clientY: 50, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 200, clientY: 180, pointerId: 1 });
+    const fill = container.querySelector<HTMLElement>(".shape-preview")!.style.background;
+    expect(fill).not.toBe("transparent");
+    fireEvent.pointerUp(canvas, { clientX: 200, clientY: 180, pointerId: 1 });
+    expect(container.querySelector<HTMLElement>(".item-note")!.style.background).toBe(fill);
+  });
+
+  it("passes the selected connector color to its endpoint markers", () => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "a", kind: "shape", x: 0, y: 0, w: 100, h: 100, text: "A" },
+      { id: "b", kind: "shape", x: 300, y: 0, w: 100, h: 100, text: "B" },
+    ];
+    initial.boards[0].connections = [{ id: "ab", from: "a", to: "b" }];
+    const { container } = render(<App initial={initial} />);
+    const line = container.querySelector(".connector-line")!;
+    const tips = line.nextElementSibling!;
+    expect(tips.getAttribute("stroke")).toBe("currentColor");
+    expect(tips.getAttribute("stroke-opacity")).toBe("0");
+    const marker = container.querySelector("#arrow path")!;
+    expect(marker.getAttribute("stroke")).toBe("context-stroke");
+    expect(marker.getAttribute("stroke-opacity")).toBe("1");
+    fireEvent.pointerDown(line, { button: 0 });
+    expect((line.parentElement as unknown as SVGElement).style.color).toBe("var(--selection)");
+    fireEvent.pointerDown(container.querySelector(".canvas")!, { button: 0, clientX: 600, clientY: 300, pointerId: 1 });
+    fireEvent.pointerUp(container.querySelector(".canvas")!, { clientX: 600, clientY: 300, pointerId: 1 });
+    expect((line.parentElement as unknown as SVGElement).style.color).toBe("");
+  });
+
+  it.each(["click", "cancel", "blur", "escape"])("does not leave an Alt-drag copy after %s", (ending) => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "node", kind: "shape", x: 20, y: 20, w: 100, h: 100, text: "Original" }];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    const node = container.querySelector<HTMLElement>('[data-item-id="node"]')!;
+    fireEvent.pointerDown(node, { button: 0, clientX: 50, clientY: 50, altKey: true, pointerId: 1 });
+    expect(container.querySelectorAll(".board-item")).toHaveLength(1);
+    if (ending === "click") {
+      fireEvent.pointerMove(canvas, { clientX: 51, clientY: 51, pointerId: 1 });
+      fireEvent.pointerUp(canvas, { clientX: 51, clientY: 51, pointerId: 1 });
+    } else {
+      fireEvent.pointerMove(canvas, { clientX: 180, clientY: 80, pointerId: 1 });
+      expect(container.querySelectorAll(".board-item")).toHaveLength(2);
+      if (ending === "cancel") fireEvent.pointerCancel(canvas, { pointerId: 1 });
+      else if (ending === "blur") fireEvent.blur(window);
+      else fireEvent.keyDown(window, { key: "Escape" });
+      fireEvent.pointerUp(canvas, { clientX: 180, clientY: 80, pointerId: 1 });
+    }
+    expect(container.querySelectorAll(".board-item")).toHaveLength(1);
+    expect(node.style.left).toBe("20px");
+    expect(node.style.top).toBe("20px");
+  });
+
+  it.each(["x", "y"])("keeps the initial Shift-drag %s axis when the pointer crosses the diagonal", (axis) => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "node", kind: "shape", x: 20, y: 20, w: 100, h: 100, text: "Node" }];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    const node = container.querySelector<HTMLElement>('[data-item-id="node"]')!;
+    fireEvent.pointerDown(node, { button: 0, clientX: 50, clientY: 50, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: axis === "x" ? 90 : 80, clientY: axis === "x" ? 80 : 90, shiftKey: true, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: axis === "x" ? 100 : 180, clientY: axis === "x" ? 180 : 100, shiftKey: true, pointerId: 1 });
+    expect(node.style.left).toBe(axis === "x" ? "70px" : "20px");
+    expect(node.style.top).toBe(axis === "x" ? "20px" : "70px");
+    fireEvent.pointerUp(canvas, { clientX: 100, clientY: 180, pointerId: 1 });
   });
 
   it("Alt-drags a copy along one axis and undoes the entire gesture", () => {
