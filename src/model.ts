@@ -1,3 +1,5 @@
+import { instagramPermalink } from "./instagram";
+
 export type Kind =
   "note" | "text" | "image" | "link" | "drawing" | "shape" | "video" | "audio";
 export type Point = { x: number; y: number };
@@ -76,11 +78,8 @@ export function embedUrl(value: string): string | null {
     /^\/(track|album|playlist|episode|show)\/[\w]+/.test(u.pathname)
   )
     return `https://open.spotify.com/embed${u.pathname}`;
-  if (host === "instagram.com") {
-    const m = u.pathname.match(/^\/(p|reel|reels|tv)\/([\w-]+)/);
-    if (m)
-      return `https://www.instagram.com/${m[1] === "reels" ? "reel" : m[1]}/${m[2]}/embed/`;
-  }
+  const instagram = instagramPermalink(valueUrl);
+  if (instagram) return `${instagram}embed/`;
   if (host === "tiktok.com") {
     const m = u.pathname.match(/\/video\/(\d+)/);
     if (m) return `https://www.tiktok.com/player/v1/${m[1]}`;

@@ -63,6 +63,7 @@ import {
 import { readLegacy, saveWorkspace } from "./storage";
 import { exportPng } from "./exportPng";
 import { readTheme, saveTheme } from "./theme";
+import { instagramEmbedDocument } from "./instagram";
 type Tool = "select" | "text" | "draw" | "connect" | "shape";
 type Modal = "help" | "links" | "link" | "delete" | null;
 type Gesture = {
@@ -1588,6 +1589,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                     {embedUrl(i.src || "") ? (
                       <iframe
                         src={embedUrl(i.src || "")!}
+                        srcDoc={instagramEmbedDocument(i.src || "")}
                         title={i.text}
                         loading="lazy"
                         allow="autoplay; encrypted-media; fullscreen; picture-in-picture"

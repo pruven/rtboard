@@ -19,6 +19,7 @@ Open the URL Vite prints. `bun run build` produces `dist/` for any static host; 
 - Drag selection, Shift-click selection, group movement, duplication, layer order, resizing, arrow-key nudging, undo, and redo. Shift-resize preserves aspect ratio.
 - Paste links or text, or drag in media. Import lists of links from File. Image, video, and audio files up to 40 MB each are supported.
 - Inline YouTube, Instagram, TikTok, X/Twitter, Vimeo, Spotify, Reddit, Loom, and CodePen embeds. Direct video/audio URLs use native media controls. Other URLs become bookmarks.
+- Instagram cards initialize through Instagram's official embed script, including in HTML exports. Public reels can play inline when Instagram permits it; use the card's open link if a reel requires Instagram or sign-in.
 - Search text, notes, titles, and media names with Ctrl/Cmd F.
 - Right-click the canvas for insertion and selection actions. Double-click a tool to keep it active.
 

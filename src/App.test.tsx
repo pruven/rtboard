@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+// @vitest-environment-options {"settings":{"disableIframePageLoading":true,"handleDisabledFileLoadingAsSuccess":true}}
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
@@ -195,13 +196,6 @@ describe("canvas workflow", () => {
     expect(screen.getByText("A note")).toBeTruthy();
   });
   it("opens provider embeds directly and supports board search", () => {
-    // Keep provider requests out of DOM tests while checking the actual embed URL.
-    const createElement = document.createElement.bind(document);
-    vi.spyOn(document, "createElement").mockImplementation((tag, options) => {
-      const node = createElement(tag, options);
-      if (tag === "iframe") node.setAttribute("srcdoc", " ");
-      return node;
-    });
     render(<App initial={seed()} />);
     fireEvent.click(screen.getByRole("button", { name: "File" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Add a link…" }));
@@ -216,6 +210,16 @@ describe("canvas workflow", () => {
       "src",
       "https://www.instagram.com/reel/ABC/embed/",
     );
+    const frame = screen.getByTitle("Reference reel") as HTMLIFrameElement;
+    const player = new DOMParser().parseFromString(frame.srcdoc, "text/html");
+    expect(player.querySelector("blockquote")?.dataset.instgrmPermalink).toBe(
+      "https://www.instagram.com/reel/ABC/",
+    );
+    expect(player.querySelector("script[src]")?.getAttribute("src")).toBe(
+      "https://www.instagram.com/embed.js",
+    );
+    expect(frame.style.pointerEvents).toBe("auto");
+    expect(frame.allow).toContain("autoplay");
     fireEvent.keyDown(window, { key: "f", ctrlKey: true });
     fireEvent.change(screen.getByLabelText("Find on board"), {
       target: { value: "Reference" },

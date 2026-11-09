@@ -1,4 +1,5 @@
 import { type Board, embedUrl, connectionPoints } from "./model";
+import { instagramEmbedDocument } from "./instagram";
 // Serialized into exported files. Keep this function independent of module scope.
 function viewer() {
   const data = JSON.parse(
@@ -6,6 +7,7 @@ function viewer() {
   );
   const board = data.board;
   const media = data.embeds as Record<string, string>;
+  const embedDocuments = data.embedDocuments as Record<string, string>;
   const stage = document.getElementById("stage")!,
     world = document.getElementById("world")!;
   let x = 0,
@@ -75,6 +77,7 @@ function viewer() {
       if (media[i.id]) {
         const frame = document.createElement("iframe");
         frame.src = media[i.id];
+        if (embedDocuments[i.id]) frame.srcdoc = embedDocuments[i.id];
         frame.title = i.text;
         frame.allow =
           "autoplay; encrypted-media; fullscreen; picture-in-picture";
@@ -206,12 +209,18 @@ export function shareHtml(board: Board) {
   const embeds = Object.fromEntries(
     board.items.map((i) => [i.id, embedUrl(i.src || "")]),
   );
+  const embedDocuments = Object.fromEntries(
+    board.items.flatMap((i) => {
+      const html = instagramEmbedDocument(i.src || "");
+      return html ? [[i.id, html]] : [];
+    }),
+  );
   const lines = board.connections.flatMap((c) => {
     const a = board.items.find((i) => i.id === c.from),
       b = board.items.find((i) => i.id === c.to);
     return a && b ? [connectionPoints(a, b)] : [];
   });
-  const data = JSON.stringify({ board, embeds, lines }).replace(
+  const data = JSON.stringify({ board, embeds, embedDocuments, lines }).replace(
     /</g,
     "\\u003c",
   );
