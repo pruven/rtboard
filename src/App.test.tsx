@@ -647,6 +647,25 @@ describe("canvas workflow", () => {
 });
 
 describe("sketch canvas interactions", () => {
+  it("opens and focuses a text box immediately with T without intercepting typing", () => {
+    const { container } = render(<App initial={seed()} />);
+    fireEvent.keyDown(window, { key: "t" });
+    const editor = screen.getByLabelText("Edit text");
+    expect(document.activeElement).toBe(editor);
+    expect(container.querySelector(".item-text")!.contains(editor)).toBe(true);
+    fireEvent.keyDown(window, { key: "t", repeat: true });
+    fireEvent.keyDown(editor, { key: "t" });
+    fireEvent.change(editor, { target: { value: "text" } });
+    expect(container.querySelectorAll(".item-text")).toHaveLength(1);
+    expect(editor).toHaveProperty("value", "text");
+    fireEvent.blur(editor);
+    fireEvent.pointerMove(container.querySelector(".canvas")!, { clientX: 210, clientY: 160 });
+    fireEvent.keyDown(window, { key: "T", shiftKey: true });
+    const next = screen.getByLabelText("Edit text").closest<HTMLElement>(".item-text")!;
+    expect(next.style.left).toBe("210px");
+    expect(next.style.top).toBe("160px");
+  });
+
   it("constrains shapes, draws sketch strokes, and supports ellipse shortcuts", () => {
     const { container } = render(<App initial={seed()} />);
     const canvas = container.querySelector(".canvas")!;

@@ -1139,10 +1139,17 @@ export default function App({ initial }: { initial?: Workspace }) {
           ),
         });
       } else if (!mod) {
+        if (!e.altKey && !e.isComposing && ["t", "8"].includes(e.key.toLowerCase())) {
+          e.preventDefault();
+          if (!e.repeat) {
+            chooseTool("select");
+            addText(lastPointer.current || center());
+          }
+          return;
+        }
         const tools: Record<string, Tool> = {
           v: "select",
           h: "hand",
-          t: "text",
           p: "draw",
           x: "draw",
           a: "connect",
@@ -1150,7 +1157,6 @@ export default function App({ initial }: { initial?: Workspace }) {
           "2": "shape",
           "5": "connect",
           "7": "draw",
-          "8": "text",
           c: "connect",
           s: "shape",
         };
