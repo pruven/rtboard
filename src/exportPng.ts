@@ -4,6 +4,7 @@ import {
   bounds,
   connectionGeometry,
   connectorPath,
+  drawingConnectorPath,
   type ConnectorRoute,
   type ConnectorArrowheads,
   connectorArrowheads,
@@ -130,7 +131,7 @@ export async function exportPng(board: Board, dark: boolean) {
           i.x + p.at(-1)![0],
           i.y + p.at(-1)![1],
           i.route,
-          undefined,
+          drawingConnectorPath(i, board.items),
           i.arrowheads,
         );
       else {

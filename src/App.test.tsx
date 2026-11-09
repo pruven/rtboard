@@ -215,6 +215,96 @@ describe("dragging selected elements", () => {
   });
 });
 
+describe("review regressions", () => {
+  const connected = (drawing = false) => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "a", kind: "shape", x: 0, y: 0, w: 100, h: 100, text: "A" },
+      { id: "b", kind: "shape", x: 300, y: 200, w: 100, h: 100, text: "B" },
+      { id: "c", kind: "shape", x: 600, y: 200, w: 100, h: 100, text: "C" },
+    ];
+    if (drawing) initial.boards[0].items.push({ id: "arrow", kind: "drawing", x: 95, y: 45, w: 210, h: 210,
+      text: "", arrow: true, route: "elbow", points: [[5, 5], [205, 205]],
+      startBinding: "a", endBinding: "b", bindingsInitialized: true });
+    else initial.boards[0].connections = [{ id: "line", from: "a", to: "b", route: "elbow" }];
+    return initial;
+  };
+
+  it("deletes all selected elements after selecting a connector then pressing Ctrl+A", () => {
+    const { container } = render(<App initial={connected()} />);
+    fireEvent.pointerDown(container.querySelector(".connector-line")!, { button: 0 });
+    expect(screen.getByLabelText("Reconnect end")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+    expect(container.querySelectorAll(".board-item.selected")).toHaveLength(3);
+    expect(screen.queryByLabelText("Reconnect end")).toBeNull();
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(container.querySelectorAll(".board-item")).toHaveLength(0);
+    expect(container.querySelectorAll(".connector-line")).toHaveLength(0);
+  });
+
+  it.each([false, true])("can commit and cancel keyboard reconnection (drawing=%s)", async (drawing) => {
+    const { container } = render(<App initial={connected(drawing)} />);
+    const canvas = container.querySelector(".canvas")!;
+    const selectable = container.querySelector(drawing ? '[data-item-id="arrow"]' : ".connector-line")!;
+    fireEvent.pointerDown(selectable, { button: 0, clientX: 100, clientY: 50, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 100, clientY: 50, pointerId: 1 });
+    const path = () => container.querySelector(drawing ? ".item-drawing path" : ".connector-line")!.getAttribute("d");
+    const before = path();
+    const handle = screen.getByRole("button", { name: "Reconnect end" });
+    expect(handle.getAttribute("tabindex")).toBe("0");
+    handle.focus();
+    fireEvent.keyDown(handle, { key: "Enter" });
+    expect(screen.getByRole("dialog", { name: "Reconnect endpoint" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "A" })).toBeNull(); // No self-loop.
+    const select = screen.getByLabelText("Attach to element");
+    fireEvent.change(select, { target: { value: "c" } });
+    fireEvent.keyDown(select, { key: "Escape" });
+    expect(path()).toBe(before);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(handle));
+    fireEvent.keyDown(handle, { key: " " });
+    fireEvent.change(screen.getByLabelText("Attach to element"), { target: { value: "c" } });
+    fireEvent.submit(screen.getByRole("button", { name: "Apply connection" }).closest("form")!);
+    expect(path()).not.toBe(before);
+    expect(path()!.endsWith(drawing ? "505 205" : "600 250")).toBe(true);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(path()).toBe(before);
+  });
+
+  it("renders bound drawing routes using the element centers rather than the endpoint gap", () => {
+    const initial = connected(true);
+    initial.boards[0].items[0].w = 500;
+    Object.assign(initial.boards[0].items[1], { x: 600, y: 400, w: 500 });
+    const { container } = render(<App initial={initial} />);
+    expect(container.querySelector(".item-drawing path")!.getAttribute("d"))
+      .toBe("M 5 5 L 55 5 L 55 405 L 105 405");
+  });
+
+  it("keeps a parent-side pan area available while an Instagram player is interactive", () => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "media", kind: "link", x: 0, y: 0, w: 330, h: 520,
+      text: "Instagram", src: "https://instagram.com/p/ABC/" }];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "Interact with media" }));
+    const frame = container.querySelector("iframe")!;
+    expect(frame.style.pointerEvents).toBe("auto");
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-popups allow-popups-to-escape-sandbox");
+    const footer = container.querySelector(".embed-footer")!;
+    expect(footer.getAttribute("title")).toContain("Middle-drag this footer");
+    fireEvent.pointerDown(footer, { button: 1, clientX: 50, clientY: 510, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 150, clientY: 550, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { button: 1, clientX: 150, clientY: 550, pointerId: 1 });
+    expect(container.querySelector<HTMLElement>(".world")!.style.transform).toBe("translate(100px,40px) scale(1)");
+    expect(container.querySelector<HTMLElement>(".board-item")!.style.left).toBe("0px");
+    expect(screen.getByRole("button", { name: "Select" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Hand" }));
+    expect(frame.style.pointerEvents).toBe("none");
+  });
+});
+
 describe("canvas workflow", () => {
   it.each(["start", "end"] as const)("keeps a snapped %s endpoint attached when the other end is free", (endpoint) => {
     const initial = seed();

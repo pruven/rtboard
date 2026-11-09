@@ -2,11 +2,71 @@
 // @vitest-environment-options {"settings":{"disableIframePageLoading":true,"handleDisabledFileLoadingAsSuccess":true}}
 import { describe, expect, it, vi } from "vitest";
 import { Window } from "happy-dom";
-import { instagramEmbedDocument, instagramPermalink } from "./instagram";
+import { instagramEmbedDocument, instagramPermalink, instagramSandbox } from "./instagram";
 import { createBoard, embedUrl, linkItem, parseBoardFile } from "./model";
 import { shareHtml } from "./viewer";
 
 describe("Instagram players", () => {
+  it.each(["MOUNTED", "MEASURE"])("keeps a player ready after a trusted %s message, including in a sandbox", async (type) => {
+    const player = new Window({ settings: {
+      enableJavaScriptEvaluation: true, disableJavaScriptFileLoading: true,
+      handleDisabledFileLoadingAsSuccess: true, suppressInsecureJavaScriptEnvironmentWarning: true,
+    } });
+    const timer = vi.spyOn(player, "setTimeout").mockReturnValue(1 as never);
+    const clear = vi.spyOn(player, "clearTimeout");
+    try {
+      player.document.write(instagramEmbedDocument("https://instagram.com/p/ABC/")!);
+      const frame = player.document.createElement("iframe");
+      frame.srcdoc = " ";
+      player.document.body.append(frame);
+      const send = (origin: string, source: unknown, data: unknown) => player.dispatchEvent(new player.MessageEvent("message", {
+        origin, source: source as never, data,
+      }));
+      const data = JSON.stringify({ type, details: type === "MEASURE" ? { height: 512 } : { styles: [["height", "512px"]] } });
+      send("null", player, data); // Opaque origin alone is insufficient.
+      send("https://example.com", frame.contentWindow, data);
+      send("https://www.instagram.com", frame.contentWindow, "not JSON");
+      send("null", frame.contentWindow, JSON.stringify({ type: "LOADING" }));
+      expect(player.document.body.className).not.toBe("ready");
+      send("null", frame.contentWindow, data);
+      expect(player.document.body.className).toBe("ready");
+      expect(frame.style.height).toBe("512px");
+      expect(clear).toHaveBeenCalledWith(1);
+      // A timeout or late script error must not hide an already rendered post.
+      (timer.mock.calls.find((call) => call[1] === 15000)![0] as () => void)();
+      player.document.querySelector("script[src]")!.dispatchEvent(new player.Event("error"));
+      expect(player.document.body.className).toBe("ready");
+    } finally {
+      timer.mockRestore(); clear.mockRestore();
+      await player.happyDOM.close();
+    }
+  });
+
+  it.each(["p", "tv", "reel"])("uses content-neutral status copy for /%s/ links", (kind) => {
+    const html = instagramEmbedDocument(`https://instagram.com/${kind}/ABC/`)!;
+    expect(html).toContain("Loading Instagram content");
+    expect(html).toContain("load this content");
+    expect(html).not.toContain("this reel");
+    expect(html).not.toContain("Instagram reel…");
+  });
+
+  it("sandboxes the SDK in the executed HTML export without granting the board origin", async () => {
+    const player = new Window({ settings: {
+      enableJavaScriptEvaluation: true, disableJavaScriptFileLoading: true,
+      handleDisabledFileLoadingAsSuccess: true, suppressInsecureJavaScriptEnvironmentWarning: true,
+    } });
+    try {
+      const board = createBoard();
+      board.items = [linkItem("https://instagram.com/p/ABC/", { x: 0, y: 0 })];
+      player.document.write(shareHtml(board));
+      const frame = player.document.querySelector("#world .item > iframe")!;
+      expect(frame.getAttribute("sandbox")).toBe(instagramSandbox);
+      expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
+      expect(frame.getAttribute("srcdoc")).toContain("https://www.instagram.com/embed.js");
+    } finally {
+      await player.happyDOM.close();
+    }
+  });
   it("replaces a blank or blocked player with a watch link after the load timeout", async () => {
     const player = new Window({ settings: {
       enableJavaScriptEvaluation: true,
@@ -49,7 +109,7 @@ describe("Instagram players", () => {
     expect(html).toContain('data-instgrm-version="14"');
     expect(html).toContain('<script async src="https://www.instagram.com/embed.js"></script>');
     expect(html).not.toContain("igsh");
-    expect(html).toContain("Watch on Instagram");
+    expect(html).toContain("View on Instagram");
   });
 
   it.each([

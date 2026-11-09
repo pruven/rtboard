@@ -15,6 +15,7 @@ Open the URL Vite prints. `bun run build` produces `dist/` for any static host; 
 
 - A board library, compact header, full-screen dotted canvas, six-tool bottom toolbar, and light/dark themes.
 - Select (V) moves and selects elements. Hand (H) pans the canvas. Hold the middle mouse button and drag to temporarily pan from any tool; releasing restores that tool. Space + drag also temporarily pans.
+- Interactive embeds receive their own mouse events. Middle-drag an embed's footer or selection border to pan, or choose Hand mode to pan over the player itself.
 - Text, freehand drawings, rectangles, ellipses, sticky notes, and arrow connectors. Draw shapes by dragging; double-click text or a note to edit it.
 - Connectors offer Straight, Curved, and Elbow routes. Start and release near elements to snap to their edges; attached connectors follow elements as they move or resize. Select a connector to change its route or drag either endpoint to another element.
 - Each snapped endpoint stays attached independently, even when the other end is free. Existing standalone connectors also have endpoint handles for attaching or detaching them.

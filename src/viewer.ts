@@ -1,5 +1,5 @@
-import { type Board, embedUrl, connectionGeometry, connectorPath, connectorMarkers } from "./model";
-import { instagramEmbedDocument } from "./instagram";
+import { type Board, embedUrl, connectionGeometry, drawingConnectorPath, connectorMarkers } from "./model";
+import { instagramEmbedDocument, instagramSandbox } from "./instagram";
 // Serialized into exported files. Keep this function independent of module scope.
 function viewer() {
   const data = JSON.parse(
@@ -76,7 +76,10 @@ function viewer() {
       if (media[i.id]) {
         const frame = document.createElement("iframe");
         frame.src = media[i.id];
-        if (embedDocuments[i.id]) frame.srcdoc = embedDocuments[i.id];
+        if (embedDocuments[i.id]) {
+          frame.setAttribute("sandbox", data.instagramSandbox);
+          frame.srcdoc = embedDocuments[i.id];
+        }
         frame.title = i.text;
         frame.allow =
           "autoplay; encrypted-media; fullscreen; picture-in-picture";
@@ -227,12 +230,11 @@ export function shareHtml(board: Board) {
   });
   const drawingPaths = Object.fromEntries(board.items.flatMap((i) => {
     if (!i.arrow || !i.points || i.points.length < 2) return [];
-    const a = i.points[0], b = i.points.at(-1)!;
-    return [[i.id, connectorPath({ x: a[0], y: a[1] }, { x: b[0], y: b[1] }, i.route).d]];
+    return [[i.id, drawingConnectorPath(i, board.items, true).d]];
   }));
   const drawingMarkers = Object.fromEntries(board.items.filter((i) => i.arrow)
     .map((i) => [i.id, connectorMarkers(i.arrowheads)]));
-  const data = JSON.stringify({ board, embeds, embedDocuments, lines, drawingPaths, drawingMarkers }).replace(
+  const data = JSON.stringify({ board, embeds, embedDocuments, instagramSandbox, lines, drawingPaths, drawingMarkers }).replace(
     /</g,
     "\\u003c",
   );

@@ -464,6 +464,10 @@ button svg {
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
+.connector-endpoint:focus-visible {
+  stroke-width: 3;
+  fill: var(--selection);
+}
 .property-row.connector-routes > button {
   width: auto;
   display: flex;
@@ -979,6 +983,7 @@ hr {
   margin-bottom: 16px;
 }
 .modal input,
+.modal select,
 .modal textarea {
   border: 1px solid var(--border);
   border-radius: 8px;

@@ -377,6 +377,18 @@ export function arrowEndpoints(i: Item) {
   return { a: { x: i.x + first[0], y: i.y + first[1] }, b: { x: i.x + last[0], y: i.y + last[1] } };
 }
 
+export function drawingConnectorPath(i: Item, items: Item[], local = false) {
+  const { a, b } = arrowEndpoints(i);
+  const source = items.find((item) => item.id === i.startBinding);
+  const target = items.find((item) => item.id === i.endBinding);
+  const center = (item: Item | undefined, fallback: Point) => item
+    ? { x: item.x + item.w / 2, y: item.y + item.h / 2 } : fallback;
+  const from = center(source, a), to = center(target, b);
+  const horizontal = Math.abs(to.x - from.x) >= Math.abs(to.y - from.y);
+  const point = (p: Point) => local ? { x: p.x - i.x, y: p.y - i.y } : p;
+  return connectorPath(point(a), point(b), i.route, horizontal);
+}
+
 export function positionArrow(i: Item, a: Point, b: Point): Item {
   const x = Math.min(a.x, b.x) - 5, y = Math.min(a.y, b.y) - 5;
   return { ...i, x, y, w: Math.abs(b.x - a.x) + 10, h: Math.abs(b.y - a.y) + 10,

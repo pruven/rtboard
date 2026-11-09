@@ -64,6 +64,7 @@ import {
   snapConnection,
   arrowEndpoints,
   positionArrow,
+  drawingConnectorPath,
   updateArrowBindings,
   download,
   shareHtml,
@@ -74,9 +75,9 @@ import {
 import { readLegacy, saveWorkspace } from "./storage";
 import { exportPng } from "./exportPng";
 import { readTheme, saveTheme } from "./theme";
-import { instagramEmbedDocument } from "./instagram";
+import { instagramEmbedDocument, instagramPermalink, instagramSandbox } from "./instagram";
 type Tool = "select" | "hand" | "text" | "draw" | "connect" | "shape";
-type Modal = "help" | "links" | "link" | "delete" | null;
+type Modal = "help" | "links" | "link" | "delete" | "reconnect" | null;
 type Gesture = {
   kind: "pan" | "drag" | "resize" | "draw" | "shape" | "connect" | "marquee";
   start: Point;
@@ -154,6 +155,10 @@ export default function App({ initial }: { initial?: Workspace }) {
     [deleteId, setDeleteId] = useState(""),
     [busy, setBusy] = useState(false),
     [backup, setBackup] = useState(false);
+  const [reconnectDraft, setReconnectDraft] = useState<{
+    id: string; arrow: boolean; endpoint: "from" | "to"; target: string;
+  } | null>(null);
+  const reconnectHandle = useRef<SVGCircleElement | null>(null);
   const canvas = useRef<HTMLDivElement>(null),
     files = useRef<HTMLInputElement>(null),
     imports = useRef<HTMLInputElement>(null),
@@ -996,9 +1001,32 @@ export default function App({ initial }: { initial?: Workspace }) {
     el.addEventListener("wheel", wheel, { passive: false });
     return () => el.removeEventListener("wheel", wheel);
   }, [gallery]);
+  const closeReconnect = () => {
+    setModal(null);
+    setReconnectDraft(null);
+    requestAnimationFrame(() => reconnectHandle.current?.focus());
+  };
+  const commitReconnect = () => {
+    if (!reconnectDraft) return;
+    const { id, arrow, endpoint, target } = reconnectDraft;
+    if (arrow) {
+      change({ ...board, items: board.items.map((i) => i.id === id ? {
+        ...i, bindingsInitialized: true,
+        [endpoint === "from" ? "startBinding" : "endBinding"]: target || undefined,
+      } : i) });
+    } else if (target) {
+      change({ ...board, connections: board.connections.map((c) => c.id === id ? { ...c, [endpoint]: target } : c) });
+    }
+    closeReconnect();
+  };
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (modal === "reconnect") {
+          e.preventDefault();
+          closeReconnect();
+          return;
+        }
         gesture.current = null;
         setPreview(null);
         setModal(null);
@@ -1031,6 +1059,7 @@ export default function App({ initial }: { initial?: Workspace }) {
         newBoard();
       } else if (mod && e.key.toLowerCase() === "a") {
         e.preventDefault();
+        setSelectedConnection(null);
         setSelected(board.items.map((i) => i.id));
       } else if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
@@ -1289,6 +1318,12 @@ export default function App({ initial }: { initial?: Workspace }) {
   const active = board.items.find((i) => i.id === selected[0]);
   const selectedBounds = selected.length > 1 ? bounds(board.items.filter((i) => selected.includes(i.id))) : null;
   const activeConnection = board.connections.find((c) => c.id === selectedConnection);
+  const reconnectItem = reconnectDraft?.arrow ? board.items.find((i) => i.id === reconnectDraft.id) : undefined;
+  const reconnectConnection = !reconnectDraft?.arrow ? board.connections.find((c) => c.id === reconnectDraft?.id) : undefined;
+  const reconnectFixed = reconnectDraft?.endpoint === "from"
+    ? reconnectItem?.endBinding || reconnectConnection?.to
+    : reconnectItem?.startBinding || reconnectConnection?.from;
+  const reconnectTargets = board.items.filter((i) => i.id !== reconnectFixed && !(i.kind === "drawing" && i.arrow));
   const currentRoute = activeConnection ? activeConnection.route || "straight"
     : active?.arrow ? active.route || "straight" : route;
   const currentArrowheads = connectorArrowheads(activeConnection ? activeConnection.arrowheads
@@ -1721,11 +1756,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                   <svg viewBox={`0 0 ${i.w} ${i.h}`} preserveAspectRatio="none">
                     {i.arrow && i.points && i.points.length > 1 ? (
                       <path
-                        d={connectorPath(
-                          { x: i.points[0][0], y: i.points[0][1] },
-                          { x: i.points.at(-1)![0], y: i.points.at(-1)![1] },
-                          i.route,
-                        ).d}
+                        d={drawingConnectorPath(i, board.items, true).d}
                         fill="none" stroke="currentColor" strokeWidth={i.strokeWidth || 2}
                         strokeLinecap="round" strokeLinejoin="round" {...connectorMarkers(i.arrowheads)}
                       />
@@ -1744,6 +1775,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                       <iframe
                         src={embedUrl(i.src || "")!}
                         srcDoc={instagramEmbedDocument(i.src || "")}
+                        sandbox={instagramPermalink(i.src || "") ? instagramSandbox : undefined}
                         title={i.text}
                         loading="lazy"
                         allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
@@ -1763,7 +1795,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                         </a>
                       </div>
                     )}
-                    <div className="embed-footer">
+                    <div className="embed-footer" title="Middle-drag this footer to pan. Use Hand mode to pan over the player.">
                       <span>{i.src?.replace(/^https?:\/\/(www\.)?/, "")}</span>
                       <a
                         href={i.src}
@@ -1840,6 +1872,17 @@ export default function App({ initial }: { initial?: Workspace }) {
                   const p = endpoint === "from" ? ends.a : ends.b;
                   return <circle key={endpoint} cx={p.x} cy={p.y} r={6 / zoom}
                     className="connector-endpoint" aria-label={`Reconnect ${endpoint === "from" ? "start" : "end"}`}
+                    role="button" tabIndex={0} aria-haspopup="dialog"
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter" && e.key !== " ") return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      reconnectHandle.current = e.currentTarget;
+                      setReconnectDraft({ id: activeConnection?.id || active!.id, arrow: !activeConnection, endpoint,
+                        target: activeConnection ? activeConnection[endpoint]
+                          : (endpoint === "from" ? active!.startBinding : active!.endBinding) || "" });
+                      setModal("reconnect");
+                    }}
                     onPointerDown={(e) => {
                       e.stopPropagation();
                       const fixed = activeConnection
@@ -2388,6 +2431,7 @@ export default function App({ initial }: { initial?: Workspace }) {
             )}
             <button
               onClick={() => {
+                setSelectedConnection(null);
                 setSelected(board.items.map((i) => i.id));
                 setContext(null);
               }}
@@ -2409,7 +2453,7 @@ export default function App({ initial }: { initial?: Workspace }) {
         <div
           className="modal-backdrop"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setModal(null);
+            if (e.target === e.currentTarget) modal === "reconnect" ? closeReconnect() : setModal(null);
           }}
         >
           <section
@@ -2417,7 +2461,7 @@ export default function App({ initial }: { initial?: Workspace }) {
             role="dialog"
             aria-modal="true"
             aria-label={
-              modal === "help"
+              modal === "reconnect" ? "Reconnect endpoint" : modal === "help"
                 ? "Keyboard shortcuts"
                 : modal === "delete"
                   ? "Delete board"
@@ -2425,14 +2469,41 @@ export default function App({ initial }: { initial?: Workspace }) {
                     ? "Import links"
                     : "Add a link"
             }
+            onKeyDown={(e) => {
+              if (modal !== "reconnect" || e.key !== "Tab") return;
+              const controls = [...e.currentTarget.querySelectorAll<HTMLElement>("button,select")];
+              const next = controls.indexOf(document.activeElement as HTMLElement) + (e.shiftKey ? -1 : 1);
+              if (next < 0 || next >= controls.length) {
+                e.preventDefault();
+                controls[next < 0 ? controls.length - 1 : 0]?.focus();
+              }
+            }}
           >
             <button
               className="modal-close"
               aria-label="Close dialog"
-              onClick={() => setModal(null)}
+              onClick={() => modal === "reconnect" ? closeReconnect() : setModal(null)}
             >
               <X size={18} />
             </button>
+            {modal === "reconnect" && reconnectDraft && (
+              <form onSubmit={(e) => { e.preventDefault(); commitReconnect(); }}>
+                <h2>Reconnect {reconnectDraft.endpoint === "from" ? "start" : "end"}</h2>
+                <p>Choose an element, then apply. Press Escape to cancel.</p>
+                <label htmlFor="attachment-target">Attach to element</label>
+                <select id="attachment-target" autoFocus value={reconnectDraft.target}
+                  onChange={(e) => setReconnectDraft({ ...reconnectDraft, target: e.target.value })}>
+                  {reconnectDraft.arrow && <option value="">No attachment</option>}
+                  {reconnectTargets.map((i, index) => <option key={i.id} value={i.id}>
+                    {i.text.trim().slice(0, 60) || `${i.kind} ${index + 1}`}
+                  </option>)}
+                </select>
+                <div className="dialog-actions">
+                  <button type="button" onClick={closeReconnect}>Cancel</button>
+                  <button type="submit" className="primary">Apply connection</button>
+                </div>
+              </form>
+            )}
             {modal === "help" && (
               <>
                 <h2>Keyboard shortcuts</h2>

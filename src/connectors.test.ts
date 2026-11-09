@@ -5,6 +5,7 @@ import {
   connectionGeometry,
   connectorArrowheads, connectorMarkers,
   updateArrowBindings, arrowEndpoints,
+  drawingConnectorPath,
   duplicateItems, validateBoard, shareHtml, parseBoardFile,
 } from "./model";
 
@@ -12,6 +13,20 @@ const a: Item = { id: "a", kind: "shape", x: 0, y: 0, w: 100, h: 100, text: "" }
 const b: Item = { ...a, id: "b", x: 300, y: 200 };
 
 describe("connector routing", () => {
+  it.each(["elbow", "curved"] as const)("uses the attachment axis for bound %s drawings and HTML exports", (route) => {
+    const source = { ...a, w: 500 }, target = { ...b, x: 600, y: 400, w: 500 };
+    const arrow: Item = { ...a, id: "arrow", kind: "drawing", arrow: true, route,
+      startBinding: "a", endBinding: "b", bindingsInitialized: true, points: [[0, 0], [600, 400]] };
+    const board = updateArrowBindings({ ...createBoard(), items: [source, target, arrow] });
+    const i = board.items[2], geometry = drawingConnectorPath(i, board.items);
+    expect(geometry.d).toBe(route === "elbow"
+      ? "M 500 50 L 550 50 L 550 450 L 600 450"
+      : "M 500 50 C 550 50 550 450 600 450");
+    expect(geometry.head).toEqual({ x: 550, y: 50 });
+    expect(geometry.tail).toEqual({ x: 550, y: 450 });
+    const data = JSON.parse(new DOMParser().parseFromString(shareHtml(board), "text/html").getElementById("rtboard-data")!.textContent!);
+    expect(data.drawingPaths.arrow).toBe(drawingConnectorPath(i, board.items, true).d);
+  });
   it.each(["start", "end"] as const)("keeps an independently bound %s endpoint attached through moves and resizing", (endpoint) => {
     const arrow: Item = { ...a, id: "arrow", kind: "drawing", arrow: true,
       x: 50, y: 50, points: [[0, 0], [200, 100]], bindingsInitialized: true,
