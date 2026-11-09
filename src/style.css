@@ -139,6 +139,14 @@ button svg {
   background: var(--panel);
   color: #d4d4d4;
 }
+.theme-toggle {
+  display: flex;
+  gap: 6px;
+  width: auto;
+  padding: 0 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
 .file-button {
   height: 32px;
   border: 1px solid var(--border);
@@ -977,6 +985,12 @@ hr {
   .header-button {
     width: 27px;
     height: 27px;
+  }
+  .theme-toggle {
+    padding: 0;
+  }
+  .theme-toggle span {
+    display: none;
   }
   .file-button {
     height: 30px;

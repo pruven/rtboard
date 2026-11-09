@@ -62,6 +62,7 @@ import {
 } from "./model";
 import { readLegacy, saveWorkspace } from "./storage";
 import { exportPng } from "./exportPng";
+import { readTheme, saveTheme } from "./theme";
 type Tool = "select" | "text" | "draw" | "connect" | "shape";
 type Modal = "help" | "links" | "link" | "delete" | null;
 type Gesture = {
@@ -99,7 +100,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     [selected, setSelected] = useState<string[]>([]),
     [editing, setEditing] = useState<string | null>(null);
   const [dark, setDark] = useState(
-      () => localStorage.getItem("rtboard.theme") !== "light",
+      () => readTheme() === "dark",
     ),
     [offset, setOffset] = useState<Point>({ x: 0, y: 0 }),
     [zoom, setZoom] = useState(1),
@@ -199,10 +200,12 @@ export default function App({ initial }: { initial?: Workspace }) {
     return () => clearTimeout(timer);
   }, [workspace, toast]);
   useEffect(() => {
-    document.documentElement.dataset.theme = dark ? "dark" : "light";
-    localStorage.setItem("rtboard.theme", dark ? "dark" : "light");
-    if (stroke === "#ffffff" || stroke === "#0a0a0a")
-      setStroke(dark ? "#ffffff" : "#0a0a0a");
+    saveTheme(dark ? "dark" : "light");
+    setStroke((current) =>
+      current === "#ffffff" || current === "#0a0a0a"
+        ? dark ? "#ffffff" : "#0a0a0a"
+        : current,
+    );
   }, [dark]);
   useEffect(
     () => () => {
@@ -1266,12 +1269,13 @@ export default function App({ initial }: { initial?: Workspace }) {
             </>
           )}
           <button
-            className="header-button"
+            className="header-button theme-toggle"
             aria-label={`Switch to ${dark ? "light" : "dark"} mode`}
             title={`${dark ? "Light" : "Dark"} mode`}
-            onClick={() => setDark(!dark)}
+            onClick={() => setDark((current) => !current)}
           >
             {dark ? <Sun size={16} /> : <Moon size={16} />}
+            <span>{dark ? "Light mode" : "Dark mode"}</span>
           </button>
           {gallery ? (
             <button className="file-button" onClick={newBoard}>
