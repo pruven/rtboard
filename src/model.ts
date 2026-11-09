@@ -1,4 +1,6 @@
-export type Kind = "note" | "text" | "image" | "link" | "drawing";
+export type Kind =
+  "note" | "text" | "image" | "link" | "drawing" | "shape" | "video" | "audio";
+export type Point = { x: number; y: number };
 export type Item = {
   id: string;
   kind: Kind;
@@ -10,6 +12,14 @@ export type Item = {
   color?: string;
   src?: string;
   points?: number[][];
+  shape?: "rectangle" | "ellipse";
+  stroke?: string;
+  strokeWidth?: number;
+  fontSize?: number;
+  bold?: boolean;
+  italic?: boolean;
+  align?: "left" | "center" | "right";
+  arrow?: boolean;
 };
 export type Connection = { id: string; from: string; to: string };
 export type Board = {
@@ -21,88 +31,23 @@ export type Board = {
 };
 export type Workspace = { boards: Board[]; active: string };
 export const uid = () => crypto.randomUUID();
-export const colors = ["#f7e6a4", "#e5ecdc", "#f4d9cb", "#dbe8ee", "#f0e6db"];
-export const imagePath = (name: string) => `/images/${name}.jpg`;
-export function initialWorkspace(): Workspace {
-  const board: Board = {
-    id: uid(),
-    name: "A slower kind of living",
-    updated: Date.now(),
-    connections: [],
-    items: [
-      {
-        id: uid(),
-        kind: "text",
-        x: 75,
-        y: 48,
-        w: 560,
-        h: 110,
-        text: "A slower kind of living.\nA collection of spaces, textures & little rituals.",
-      },
-      {
-        id: uid(),
-        kind: "image",
-        x: 75,
-        y: 195,
-        w: 292,
-        h: 358,
-        text: "Quiet mornings",
-        src: imagePath("interior"),
-      },
-      {
-        id: uid(),
-        kind: "note",
-        x: 405,
-        y: 182,
-        w: 257,
-        h: 225,
-        text: "Less, but better.\n\nNatural light.\nHonest materials.\nObjects with a story.",
-        color: colors[0],
-      },
-      {
-        id: uid(),
-        kind: "image",
-        x: 700,
-        y: 90,
-        w: 282,
-        h: 298,
-        text: "A moment of green",
-        src: imagePath("olive"),
-      },
-      {
-        id: uid(),
-        kind: "image",
-        x: 405,
-        y: 448,
-        w: 257,
-        h: 222,
-        text: "Everyday rituals",
-        src: imagePath("coffee"),
-      },
-      {
-        id: uid(),
-        kind: "note",
-        x: 711,
-        y: 428,
-        w: 252,
-        h: 205,
-        text: "Things to come back to\n\n☐ Warm, earthy tones\n☐ A little more green\n☐ Space to do nothing",
-        color: colors[1],
-      },
-      {
-        id: uid(),
-        kind: "link",
-        x: 75,
-        y: 592,
-        w: 292,
-        h: 120,
-        text: "The art of paying attention",
-        src: "https://www.youtube.com/watch?v=ZXsQAXx_ao0",
-      },
-    ],
-  };
-  return { boards: [board], active: board.id };
-}
+export const colors = [
+  "#ffe58a",
+  "#a5d8ff",
+  "#b2f2bb",
+  "#ffc9c9",
+  "#d0bfff",
+  "#e9ecef",
+];
+export const strokes = ["#0a0a0a", "#4c7ef3", "#e5484d", "#ffffff"];
+export const createBoard = (name = "Untitled board"): Board => ({
+  id: uid(),
+  name,
+  items: [],
+  connections: [],
+  updated: Date.now(),
+});
+export const initialWorkspace = (): Workspace => ({ boards: [], active: "" });
 export function safeUrl(value: string): string | null {
   try {
     const u = new URL(value);
@@ -112,89 +57,173 @@ export function safeUrl(value: string): string | null {
   }
 }
 export function embedUrl(value: string): string | null {
-  const url = safeUrl(value);
-  if (!url) return null;
-  const u = new URL(url);
-  if (u.hostname === "youtu.be")
-    return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(u.pathname.slice(1))}`;
-  if (
-    ["youtube.com", "www.youtube.com", "m.youtube.com"].includes(u.hostname)
-  ) {
-    const id =
+  const valueUrl = safeUrl(value);
+  if (!valueUrl) return null;
+  const u = new URL(valueUrl),
+    host = u.hostname.replace(/^www\./, "");
+  let id: string | undefined;
+  if (host === "youtu.be") id = u.pathname.split("/")[1];
+  if (["youtube.com", "m.youtube.com"].includes(host))
+    id =
       u.searchParams.get("v") ||
-      u.pathname.match(/^\/(?:shorts|embed)\/([\w-]+)/)?.[1];
-    if (id)
-      return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}`;
-  }
+      u.pathname.match(/^\/(?:shorts|embed|live)\/([\w-]+)/)?.[1];
+  if (id && /^[\w-]+$/.test(id))
+    return `https://www.youtube-nocookie.com/embed/${id}`;
+  if (host === "vimeo.com" && /^\/\d+/.test(u.pathname))
+    return `https://player.vimeo.com/video/${u.pathname.split("/")[1]}`;
   if (
-    ["vimeo.com", "www.vimeo.com"].includes(u.hostname) &&
-    /^\/\d+$/.test(u.pathname)
-  )
-    return `https://player.vimeo.com/video${u.pathname}`;
-  if (
-    u.hostname === "open.spotify.com" &&
-    /^\/(track|album|playlist|episode)\/[a-zA-Z0-9]+/.test(u.pathname)
+    host === "open.spotify.com" &&
+    /^\/(track|album|playlist|episode|show)\/[\w]+/.test(u.pathname)
   )
     return `https://open.spotify.com/embed${u.pathname}`;
+  if (host === "instagram.com") {
+    const m = u.pathname.match(/^\/(p|reel|reels|tv)\/([\w-]+)/);
+    if (m)
+      return `https://www.instagram.com/${m[1] === "reels" ? "reel" : m[1]}/${m[2]}/embed/`;
+  }
+  if (host === "tiktok.com") {
+    const m = u.pathname.match(/\/video\/(\d+)/);
+    if (m) return `https://www.tiktok.com/player/v1/${m[1]}`;
+  }
+  if (["x.com", "twitter.com"].includes(host)) {
+    const m = u.pathname.match(/\/status\/(\d+)/);
+    if (m)
+      return `https://platform.twitter.com/embed/Tweet.html?id=${m[1]}&theme=dark`;
+  }
+  if (host === "reddit.com" && /\/comments\//.test(u.pathname))
+    return `https://www.redditmedia.com${u.pathname}?ref_source=embed&ref=share&embed=true`;
+  if (host === "loom.com") {
+    const m = u.pathname.match(/^\/(?:share|embed)\/([\w-]+)/);
+    if (m) return `https://www.loom.com/embed/${m[1]}`;
+  }
+  if (host === "codepen.io") {
+    const m = u.pathname.match(/^\/([\w-]+)\/(?:pen|full|embed)\/([\w-]+)/);
+    if (m) return `https://codepen.io/${m[1]}/embed/${m[2]}?default-tab=result`;
+  }
   return null;
 }
+export function linkItem(src: string, at: Point): Item {
+  const url = safeUrl(src);
+  if (!url) throw new Error("Enter a valid http:// or https:// link.");
+  const host = new URL(url).hostname;
+  const portrait = /instagram|tiktok/.test(host);
+  const spotify = host === "open.spotify.com";
+  const kind: Kind = /\.(mp4|webm|mov)(?:\?|$)/i.test(url)
+    ? "video"
+    : /\.(mp3|wav|ogg|m4a)(?:\?|$)/i.test(url)
+      ? "audio"
+      : "link";
+  return {
+    id: uid(),
+    kind,
+    ...at,
+    w: portrait ? 330 : spotify ? 380 : 480,
+    h:
+      kind === "audio"
+        ? 90
+        : portrait
+          ? 520
+          : spotify
+            ? 232
+            : embedUrl(url)
+              ? 305
+              : 130,
+    text: host.replace(/^www\./, ""),
+    src: url,
+  };
+}
+const colorSafe = (c: unknown) =>
+  typeof c === "string" && /^(#[\da-fA-F]{3,8}|transparent)$/.test(c)
+    ? c
+    : undefined;
 export function validateBoard(input: unknown): Board {
   const b = input as Board;
   if (
     !b ||
     typeof b.name !== "string" ||
     !Array.isArray(b.items) ||
-    b.items.length > 1000
+    b.items.length > 2000
   )
     throw new Error("This file is not an rtboard board.");
   const ids = new Set<string>();
-  const items = b.items.map((i) => {
+  const items = b.items.map((i): Item => {
     if (
       !i ||
-      !["note", "text", "image", "link", "drawing"].includes(i.kind) ||
+      ![
+        "note",
+        "text",
+        "image",
+        "link",
+        "drawing",
+        "shape",
+        "video",
+        "audio",
+      ].includes(i.kind) ||
       typeof i.id !== "string" ||
       ids.has(i.id) ||
       typeof i.text !== "string" ||
       ![i.x, i.y, i.w, i.h].every(Number.isFinite) ||
-      i.w < 20 ||
-      i.h < 20 ||
-      i.w > 10000 ||
-      i.h > 10000
+      i.w < 1 ||
+      i.h < 1 ||
+      i.w > 20000 ||
+      i.h > 20000
     )
-      throw new Error("This board contains an invalid item.");
+      throw new Error("Invalid board item.");
     ids.add(i.id);
     if (
       i.src &&
       (typeof i.src !== "string" ||
         !(
           safeUrl(i.src) ||
-          (i.kind === "image" &&
-            /^data:image\/(png|jpeg|gif|webp);base64,/.test(i.src)) ||
+          (["image", "video", "audio"].includes(i.kind) &&
+            /^data:(image\/(png|jpeg|gif|webp)|video\/(mp4|webm|quicktime)|audio\/(mpeg|mp3|wav|ogg|x-m4a|mp4));base64,/.test(
+              i.src,
+            )) ||
           /^\/images\/[a-z]+\.jpg$/.test(i.src)
         ))
     )
-      throw new Error("This board contains an unsupported URL.");
-    if (i.kind === "drawing" && !Array.isArray(i.points))
-      throw new Error("Missing drawing data.");
+      throw new Error("Unsupported media URL.");
     if (
-      i.points &&
-      (!Array.isArray(i.points) ||
-        i.points.some(
-          (p) =>
-            !Array.isArray(p) || p.length !== 2 || !p.every(Number.isFinite),
-        ))
+      (i.kind === "drawing" && !Array.isArray(i.points)) ||
+      (i.points &&
+        (!Array.isArray(i.points) ||
+          i.points.length > 100000 ||
+          i.points.some(
+            (p) =>
+              !Array.isArray(p) || p.length !== 2 || !p.every(Number.isFinite),
+          )))
     )
       throw new Error("Invalid drawing data.");
     return {
-      ...i,
-      color: colors.includes(i.color || "") ? i.color : colors[0],
+      id: i.id,
+      kind: i.kind,
+      x: i.x,
+      y: i.y,
+      w: i.w,
+      h: i.h,
+      text: i.text,
+      src: i.src,
+      color: colorSafe(i.color),
+      stroke: colorSafe(i.stroke),
+      strokeWidth: [1, 2, 3, 4, 6, 8, 12].includes(i.strokeWidth || 0)
+        ? i.strokeWidth
+        : 2,
+      points: i.points,
+      shape: i.shape === "ellipse" ? "ellipse" : "rectangle",
+      fontSize: Math.min(160, Math.max(10, i.fontSize || 20)),
+      bold: !!i.bold,
+      italic: !!i.italic,
+      align: ["left", "center", "right"].includes(i.align || "")
+        ? i.align
+        : "left",
+      arrow: !!i.arrow,
     };
   });
-  const connections = (
-    Array.isArray(b.connections) ? b.connections : []
-  ).filter(
-    (c) => c && typeof c.id === "string" && ids.has(c.from) && ids.has(c.to),
-  );
+  const connections = (Array.isArray(b.connections) ? b.connections : [])
+    .filter(
+      (c) => c && typeof c.id === "string" && ids.has(c.from) && ids.has(c.to),
+    )
+    .map((c) => ({ id: c.id, from: c.from, to: c.to }));
   return {
     id: uid(),
     name: b.name.slice(0, 120),
@@ -203,25 +232,137 @@ export function validateBoard(input: unknown): Board {
     updated: Date.now(),
   };
 }
+export function parseBoardFile(text: string): Board {
+  if (text.trimStart().startsWith("<")) {
+    const doc = new DOMParser().parseFromString(text, "text/html"),
+      data = doc.querySelector("#rtboard-data")?.textContent;
+    if (!data)
+      throw new Error(
+        "This HTML file does not contain an editable rtboard board.",
+      );
+    const parsed = JSON.parse(data);
+    return validateBoard(parsed.board || parsed);
+  }
+  return validateBoard(JSON.parse(text));
+}
+export function duplicateItems(
+  board: Board,
+  ids: string[],
+): { board: Board; ids: string[] } {
+  const map = new Map<string, string>();
+  const copies = board.items
+    .filter((i) => ids.includes(i.id))
+    .map((i) => {
+      const id = uid();
+      map.set(i.id, id);
+      return { ...i, id, x: i.x + 24, y: i.y + 24 };
+    });
+  return {
+    board: {
+      ...board,
+      items: [...board.items, ...copies],
+      connections: [
+        ...board.connections,
+        ...board.connections
+          .filter((c) => map.has(c.from) && map.has(c.to))
+          .map((c) => ({
+            id: uid(),
+            from: map.get(c.from)!,
+            to: map.get(c.to)!,
+          })),
+      ],
+    },
+    ids: copies.map((i) => i.id),
+  };
+}
+export function bounds(items: Item[]) {
+  if (!items.length) return { x: 0, y: 0, w: 800, h: 600 };
+  const x = Math.min(...items.map((i) => i.x)),
+    y = Math.min(...items.map((i) => i.y));
+  return {
+    x,
+    y,
+    w: Math.max(...items.map((i) => i.x + i.w)) - x,
+    h: Math.max(...items.map((i) => i.y + i.h)) - y,
+  };
+}
+export function connectionPoints(a: Item, b: Item) {
+  const ax = a.x + a.w / 2,
+    ay = a.y + a.h / 2,
+    bx = b.x + b.w / 2,
+    by = b.y + b.h / 2;
+  const edge = (i: Item, dx: number, dy: number) => {
+    const f =
+      1 / Math.max(Math.abs(dx) / (i.w / 2), Math.abs(dy) / (i.h / 2), 0.00001);
+    return { x: i.x + i.w / 2 + dx * f, y: i.y + i.h / 2 + dy * f };
+  };
+  return { a: edge(a, bx - ax, by - ay), b: edge(b, ax - bx, ay - by) };
+}
 export function download(
   name: string,
   content: string,
   type = "application/json",
 ) {
+  downloadBlob(name, new Blob([content], { type }));
+}
+export function downloadBlob(name: string, blob: Blob) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([content], { type }));
+  a.href = URL.createObjectURL(blob);
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
-export function shareHtml(board: Board): string {
-  const data = JSON.stringify(board).replace(/</g, "\\u003c");
-  const embeds = JSON.stringify(
-    Object.fromEntries(
-      board.items
-        .filter((i) => i.kind === "link")
-        .map((i) => [i.id, embedUrl(i.src || "")]),
+export async function packageBoard(board: Board): Promise<Board> {
+  return {
+    ...board,
+    items: await Promise.all(
+      board.items.map(async (i) => {
+        if (i.kind !== "image" || !i.src?.startsWith("/")) return i;
+        const res = await fetch(i.src);
+        if (!res.ok) throw new Error("An image could not be packaged.");
+        const blob = await res.blob();
+        const src = await new Promise<string>((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(r.result as string);
+          r.onerror = reject;
+          r.readAsDataURL(blob);
+        });
+        return { ...i, src };
+      }),
     ),
-  ).replace(/</g, "\\u003c");
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>rtboard collection</title><style>body{margin:0;background:#f5f3ef;font:16px system-ui;color:#34372e}header{padding:20px;border-bottom:1px solid #ddd}#viewport{position:absolute;inset:65px 0 0;overflow:auto}#canvas{position:relative;transform-origin:0 0}.item{position:absolute;box-sizing:border-box;white-space:pre-wrap;overflow:hidden;border-radius:6px}img,iframe{width:100%;height:100%;object-fit:cover;border:0}a{color:inherit}svg{overflow:visible}</style></head><body><header id="title"></header><div id="viewport"><div id="canvas"></div></div><script>const b=${data};const embeds=${embeds};document.getElementById('title').textContent=b.name+' · rtboard';const c=document.getElementById('canvas');const minX=Math.min(0,...b.items.map(i=>i.x))-30,minY=Math.min(0,...b.items.map(i=>i.y))-30;const maxX=Math.max(600,...b.items.map(i=>i.x+i.w))-minX,maxY=Math.max(500,...b.items.map(i=>i.y+i.h))-minY;c.style.width=maxX+'px';c.style.height=maxY+'px';const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.style.cssText='position:absolute;width:100%;height:100%;pointer-events:none';b.connections.forEach(e=>{const a=b.items.find(i=>i.id===e.from),z=b.items.find(i=>i.id===e.to);if(!a||!z)return;const l=document.createElementNS(svg.namespaceURI,'line');Object.entries({x1:a.x+a.w/2-minX,y1:a.y+a.h/2-minY,x2:z.x+z.w/2-minX,y2:z.y+z.h/2-minY,stroke:'#7d8874','stroke-width':2}).forEach(([k,v])=>l.setAttribute(k,v));svg.append(l)});c.append(svg);b.items.forEach(i=>{const el=document.createElement('div');el.className='item';Object.assign(el.style,{left:i.x-minX+'px',top:i.y-minY+'px',width:i.w+'px',height:i.h+'px',background:i.kind==='note'?i.color:'transparent',padding:['note','text','link'].includes(i.kind)?'22px':'0'});if(i.kind==='image'){const img=document.createElement('img');img.src=i.src;img.alt=i.text;el.append(img)}else if(i.kind==='link'){const a=document.createElement('a');a.href=i.src;a.textContent=i.text+' ↗';a.target='_blank';a.rel='noopener';el.append(a);if(embeds[i.id]){const play=document.createElement('button');play.textContent='▶ Play here';play.style.cssText='display:block;margin-top:15px;padding:8px 12px;border:1px solid #ccc;border-radius:4px;cursor:pointer';play.onclick=()=>{const f=document.createElement('iframe');f.src=embeds[i.id];f.title=i.text;f.allow='autoplay; encrypted-media; fullscreen';f.allowFullscreen=true;el.style.padding='0';el.replaceChildren(f)};el.append(play)}}else if(i.kind==='drawing'){const s=document.createElementNS(svg.namespaceURI,'svg');s.setAttribute('viewBox','0 0 '+i.w+' '+i.h);const p=document.createElementNS(svg.namespaceURI,'polyline');p.setAttribute('points',i.points.map(p=>p.join(',')).join(' '));p.setAttribute('fill','none');p.setAttribute('stroke','#59684e');p.setAttribute('stroke-width','3');s.append(p);el.append(s)}else el.textContent=i.text;c.append(el)});document.getElementById('viewport').addEventListener('wheel',e=>{if(e.ctrlKey||e.metaKey){e.preventDefault();const z=Math.max(.2,Math.min(2,+(c.dataset.zoom||1)-e.deltaY*.001));c.dataset.zoom=z;c.style.transform='scale('+z+')'}},{passive:false});</script></body></html>`;
+  };
 }
+export async function encodeShare(board: Board) {
+  const stream = new Blob([JSON.stringify(board)])
+    .stream()
+    .pipeThrough(new CompressionStream("gzip"));
+  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+  let str = "";
+  for (const byte of bytes) str += String.fromCharCode(byte);
+  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+export async function decodeShare(value: string) {
+  if (value.length > 1000000) throw new Error("Share link is too large.");
+  const bytes = Uint8Array.from(
+    atob(value.replace(/-/g, "+").replace(/_/g, "/")),
+    (c) => c.charCodeAt(0),
+  );
+  const stream = new Blob([bytes])
+    .stream()
+    .pipeThrough(new DecompressionStream("gzip"));
+  const reader = stream.getReader();
+  let size = 0;
+  const parts: Uint8Array[] = [];
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > 30 * 1024 * 1024) {
+      await reader.cancel();
+      throw new Error("Share link data is too large.");
+    }
+    parts.push(value);
+  }
+  return validateBoard(JSON.parse(await new Blob(parts as BlobPart[]).text()));
+}
+export { shareHtml } from "./viewer";

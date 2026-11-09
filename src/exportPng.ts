@@ -1,0 +1,168 @@
+import {
+  type Board,
+  type Item,
+  bounds,
+  connectionPoints,
+  downloadBlob,
+} from "./model";
+export async function exportPng(board: Board, dark: boolean) {
+  const box = bounds(board.items),
+    scale = Math.min(
+      2,
+      16000 / (box.w + 80),
+      16000 / (box.h + 80),
+      Math.sqrt(32000000 / ((box.w + 80) * (box.h + 80))),
+    );
+  if (scale < 0.1)
+    throw new Error("This board is too large for a PNG. Use HTML export.");
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil((box.w + 80) * scale);
+  canvas.height = Math.ceil((box.h + 80) * scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Image export is unavailable.");
+  ctx.scale(scale, scale);
+  ctx.fillStyle = dark ? "#0a0a0a" : "#fafafa";
+  ctx.fillRect(0, 0, box.w + 80, box.h + 80);
+  ctx.translate(40 - box.x, 40 - box.y);
+  const ink = dark ? "#fafafa" : "#0a0a0a";
+  const arrow = (x1: number, y1: number, x2: number, y2: number) => {
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(
+      x2 - 10 * Math.cos(angle - 0.4),
+      y2 - 10 * Math.sin(angle - 0.4),
+    );
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(
+      x2 - 10 * Math.cos(angle + 0.4),
+      y2 - 10 * Math.sin(angle + 0.4),
+    );
+    ctx.stroke();
+  };
+  ctx.strokeStyle = dark ? "#aaa" : "#555";
+  ctx.lineWidth = 2;
+  for (const c of board.connections) {
+    const a = board.items.find((i) => i.id === c.from),
+      b = board.items.find((i) => i.id === c.to);
+    if (a && b) {
+      const p = connectionPoints(a, b);
+      arrow(p.a.x, p.a.y, p.b.x, p.b.y);
+    }
+  }
+  const text = (i: Item, padding: number, color: string) => {
+    const size = i.fontSize || 20;
+    ctx.font = `${i.italic ? "italic " : ""}${i.bold ? "700" : "400"} ${size}px system-ui`;
+    ctx.fillStyle = color;
+    ctx.textBaseline = "top";
+    ctx.textAlign = i.align || "left";
+    const width = i.w - padding * 2,
+      x =
+        i.align === "center"
+          ? i.x + i.w / 2
+          : i.align === "right"
+            ? i.x + i.w - padding
+            : i.x + padding;
+    let y = i.y + padding;
+    for (const line of i.text.split("\n")) {
+      let row = "";
+      for (const word of line.split(" ")) {
+        const test = row ? row + " " + word : word;
+        if (ctx.measureText(test).width > width && row) {
+          ctx.fillText(row, x, y, width);
+          y += size * 1.4;
+          row = word;
+        } else row = test;
+      }
+      if (y < i.y + i.h - padding) ctx.fillText(row, x, y, width);
+      y += size * 1.4;
+    }
+  };
+  for (const i of board.items) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(i.x, i.y, i.w, i.h);
+    ctx.clip();
+    if (i.kind === "note" || i.kind === "shape") {
+      ctx.beginPath();
+      if (i.shape === "ellipse")
+        ctx.ellipse(
+          i.x + i.w / 2,
+          i.y + i.h / 2,
+          i.w / 2 - 2,
+          i.h / 2 - 2,
+          0,
+          0,
+          2 * Math.PI,
+        );
+      else ctx.roundRect(i.x + 1, i.y + 1, i.w - 2, i.h - 2, 4);
+      ctx.fillStyle = i.color || "transparent";
+      ctx.fill();
+      ctx.strokeStyle = i.stroke || "transparent";
+      ctx.lineWidth = i.strokeWidth || 2;
+      ctx.stroke();
+      text(i, 20, i.kind === "note" ? "#222" : ink);
+    } else if (i.kind === "text") text(i, 4, ink);
+    else if (i.kind === "image") {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => resolve(img);
+        img.onerror = () =>
+          reject(new Error("An image could not be exported."));
+        img.src = i.src!;
+      });
+      ctx.drawImage(image, i.x, i.y, i.w, i.h);
+    } else if (i.kind === "drawing") {
+      ctx.strokeStyle = i.stroke || ink;
+      ctx.lineWidth = i.strokeWidth || 2;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      const p = i.points || [];
+      if (i.arrow && p.length > 1)
+        arrow(
+          i.x + p[0][0],
+          i.y + p[0][1],
+          i.x + p.at(-1)![0],
+          i.y + p.at(-1)![1],
+        );
+      else {
+        ctx.beginPath();
+        p.forEach((p, n) =>
+          n
+            ? ctx.lineTo(i.x + p[0], i.y + p[1])
+            : ctx.moveTo(i.x + p[0], i.y + p[1]),
+        );
+        ctx.stroke();
+      }
+    } else {
+      ctx.fillStyle = dark ? "#1f1f1f" : "#eee";
+      ctx.fillRect(i.x, i.y, i.w, i.h);
+      text(
+        {
+          ...i,
+          text:
+            (i.kind === "link" ? "↗ " : i.kind === "video" ? "▶ " : "♫ ") +
+            i.text +
+            "\n\n" +
+            (i.src?.startsWith("data:") ? "Media attachment" : i.src || ""),
+          fontSize: 16,
+        },
+        20,
+        ink,
+      );
+    }
+    ctx.restore();
+  }
+  const blob = await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error("PNG export failed."))),
+      "image/png",
+    ),
+  );
+  downloadBlob(board.name + ".png", blob);
+}

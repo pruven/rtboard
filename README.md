@@ -1,36 +1,66 @@
 # rtboard
 
-A private visual workspace inspired by [crboard's](https://github.com/newomp4/crboard) idea of collecting things on an endless canvas. Independently implemented with React, TypeScript, and Vite; no source or assets were copied from the reference.
+An independently implemented canvas app closely matching [crboard's](https://github.com/newomp4/crboard) minimal interface and core workflows. Uses React, TypeScript, Vite, and Bun. The reference was inspected visually and through its public interface; its source was not cloned or copied.
 
 ## Run
 
 ```sh
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
-Open the URL Vite prints. `npm run build` produces a static site in `dist/`; `npm run preview` serves the production build. Deploy `dist/` to any static host.
+Open the URL Vite prints. `bun run build` produces `dist/` for any static host; `bun run preview` serves that production build.
 
-## Collect and arrange
+## Canvas
 
-- Multiple named boards, with browser autosave and duplication.
-- Drag and resize notes, text, images, bookmarks, and drawings.
-- Double-click text to edit; use the selected card's controls for colors, duplication, and deletion.
-- Paste text, images, and URLs directly; drag in images or use the upload control. PNG, JPG, GIF, and WebP files up to 3 MB are supported.
-- Play YouTube, Vimeo, and Spotify links inline. Other websites remain bookmarks. Embedded services require an internet connection and may apply their own privacy policies and playback restrictions.
-- Draw with the pen and connect two cards with a curved line. Double-click a connection to remove it.
-- Pan by dragging blank canvas or scrolling. Ctrl/Cmd + scroll zooms around the pointer. Zoom and fit controls also work on touch devices.
-- Search the current board, undo/redo changes, and switch between light and dark themes.
-- Export an editable `.rtboard` backup and import it from the options menu.
-- Export a standalone HTML viewer with packaged images, playable supported links, connections, scrolling, and Ctrl/Cmd + scroll zoom. HTML is a viewing format; import `.rtboard` files to resume editing.
+- A board library, compact header, full-screen dotted canvas, five-tool bottom toolbar, and light/dark themes.
+- Text, freehand drawings, rectangles, ellipses, sticky notes, and arrow connectors. Draw shapes by dragging; double-click text or a note to edit it.
+- Font size, bold, italic, alignment, fill colors, border colors, and stroke widths.
+- Drag selection, Shift-click selection, group movement, duplication, layer order, resizing, arrow-key nudging, undo, and redo. Shift-resize preserves aspect ratio.
+- Paste links or text, or drag in media. Import lists of links from File. Image, video, and audio files up to 40 MB each are supported.
+- Inline YouTube, Instagram, TikTok, X/Twitter, Vimeo, Spotify, Reddit, Loom, and CodePen embeds. Direct video/audio URLs use native media controls. Other URLs become bookmarks.
+- Search text, notes, titles, and media names with Ctrl/Cmd F.
+- Right-click the canvas for insertion and selection actions. Double-click a tool to keep it active.
 
-The help button lists keyboard shortcuts. Use Export board or Ctrl/Cmd + S to keep a backup. Local storage is tied to this browser and site origin and has limited capacity; clearing browser data deletes local boards. The app reports storage failures. There is no backend, account system, cloud sync, or collaboration.
+## Files and sharing
 
-## Checks
+- File → Save as .rtboard creates a portable editable backup with attached media.
+- File → Open imports `.rtboard`, JSON, or rtboard's exported HTML files. The `.crboard` format is not supported.
+- Export shareable HTML packages media, drawings, shapes, connectors, and a standalone pan/zoom viewer. Supported embeds remain playable online. The same HTML file can be imported back into rtboard for editing.
+- Copy share link embeds compressed board data in the URL fragment. Large boards should use HTML export instead; links are limited to 120,000 encoded characters.
+- Export PNG renders the full board at up to 2× resolution, subject to canvas memory limits. Interactive embeds, video, and audio appear as labeled media tiles in the static PNG.
+- Auto-backup writes a board file to a chosen directory immediately, then every ten minutes while the app remains open. This requires a browser with `showDirectoryPicker` support, and folder access must be selected again after reopening the app.
+
+Boards are saved locally in IndexedDB, with a localStorage fallback. Existing localStorage boards are migrated on load. No account, backend, cloud sync, or collaboration is required. Clearing site data removes local boards; keep exported backups. Embedded providers receive requests when their frames load and may restrict playback, require sign-in, or block embedding.
+
+## Shortcuts
+
+| Action                                    | Shortcut                      |
+| ----------------------------------------- | ----------------------------- |
+| Select / Text / Draw / Connector / Shapes | V / T / P / C / S             |
+| Sticky note                               | N                             |
+| Pan from any tool                         | Space + drag                  |
+| Select all                                | Ctrl/Cmd A                    |
+| Undo / redo                               | Ctrl/Cmd Z / Shift Ctrl/Cmd Z |
+| Duplicate                                 | Ctrl/Cmd D                    |
+| Copy selection / paste                    | Ctrl/Cmd C / V                |
+| Save board                                | Ctrl/Cmd S                    |
+| Find                                      | Ctrl/Cmd F                    |
+| Reset to 100% / fit content               | Ctrl/Cmd 0 / 1                |
+| Nudge / nudge by ten                      | Arrows / Shift + arrows       |
+| Delete                                    | Delete / Backspace            |
+| Cancel                                    | Escape                        |
+| Shortcuts dialog                          | ?                             |
+
+Scroll to pan, Ctrl/Cmd + scroll or pinch to zoom. Zoom buttons are also available. Double-click a connector to remove it.
+
+## Verification
 
 ```sh
-npm test
-npm run build
+bun run test
+bun run build
 ```
 
-Tests cover file validation, unsafe URL rejection, embed providers, safe HTML export, board creation, editing, history, local persistence, and search. Fonts and three starter photographs are served locally. Photographs are from Unsplash; fonts are DM Sans, DM Serif Display, and Kalam from Google Fonts.
+Tests cover the board workflow, selection, group duplication, keyboard controls, shapes, locking, search, persistence, media URL handling, safe import/export, HTML round-trips, and compressed share links.
+
+The interface uses a locally served Geist font under its included OFL license. Older starter photographs remain available locally to preserve previously saved boards; they are from Unsplash.
