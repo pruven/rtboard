@@ -196,10 +196,11 @@ button svg {
 .panning {
   cursor: grab !important;
 }
-.panning:active {
+.canvas.is-panning,
+.canvas.is-panning .world * {
   cursor: grabbing !important;
 }
-.panning .board-item {
+.panning .world * {
   cursor: grab !important;
 }
 .board-item {
@@ -212,6 +213,59 @@ button svg {
   outline: 1px solid var(--selection);
   outline-offset: 1px;
 }
+.tool-select .board-item.selected {
+  cursor: move;
+}
+.canvas.is-dragging .world * {
+  cursor: grabbing !important;
+}
+.group-selection {
+  position: absolute;
+  border: 1px solid var(--selection);
+  cursor: move;
+}
+.media-drag-surface {
+  position: absolute;
+  inset: 0;
+  cursor: move;
+}
+.media-interact {
+  position: absolute;
+  right: 0;
+  top: -32px;
+  height: 26px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.selection-drag-frame {
+  position: absolute;
+  inset: -5px;
+  pointer-events: none;
+}
+.drag-edge {
+  position: absolute;
+  pointer-events: auto;
+  cursor: move;
+}
+.drag-edge.top, .drag-edge.bottom {
+  left: 5px;
+  right: 5px;
+  height: 10px;
+}
+.drag-edge.top { top: -5px; }
+.drag-edge.bottom { bottom: -5px; }
+.drag-edge.left, .drag-edge.right {
+  top: 5px;
+  bottom: 5px;
+  width: 10px;
+}
+.drag-edge.left { left: -5px; }
+.drag-edge.right { right: -5px; }
 .board-item.connecting {
   outline: 2px solid var(--selection);
   outline-offset: 2px;

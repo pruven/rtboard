@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import type { PointerEvent as PE, CSSProperties } from "react";
 import {
   MousePointer2,
+  Hand,
   Type,
   PenLine,
   MoveUpRight,
@@ -74,7 +75,7 @@ import { readLegacy, saveWorkspace } from "./storage";
 import { exportPng } from "./exportPng";
 import { readTheme, saveTheme } from "./theme";
 import { instagramEmbedDocument } from "./instagram";
-type Tool = "select" | "text" | "draw" | "connect" | "shape";
+type Tool = "select" | "hand" | "text" | "draw" | "connect" | "shape";
 type Modal = "help" | "links" | "link" | "delete" | null;
 type Gesture = {
   kind: "pan" | "drag" | "resize" | "draw" | "shape" | "connect" | "marquee";
@@ -116,6 +117,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     [tool, setTool] = useState<Tool>("select"),
     [locked, setLocked] = useState(false),
     [selected, setSelected] = useState<string[]>([]),
+    [interacting, setInteracting] = useState<string | null>(null),
     [editing, setEditing] = useState<string | null>(null);
   const [dark, setDark] = useState(
       () => readTheme() === "dark",
@@ -174,6 +176,9 @@ export default function App({ initial }: { initial?: Workspace }) {
   current.current = board;
   selection.current = selected;
   camera.current = { offset, zoom };
+  useEffect(() => {
+    if (interacting && (selected.length !== 1 || selected[0] !== interacting)) setInteracting(null);
+  }, [selected, interacting]);
   const toast = useCallback((text: string) => {
     setNotice(text);
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -253,11 +258,12 @@ export default function App({ initial }: { initial?: Workspace }) {
     };
   };
   const chooseTool = (next: Tool) => {
+    setInteracting(null);
     setSelectedConnection(null);
     setSnapTarget(null);
     setTool(next);
     if (next !== tool) setLocked(false);
-    if (next !== "select") setSelected([]);
+    if (next !== "select" && next !== "hand") setSelected([]);
     setContext(null);
     setMenu(false);
     setConnecting(null);
@@ -644,11 +650,11 @@ export default function App({ initial }: { initial?: Workspace }) {
     canvas.current?.setPointerCapture?.(e.pointerId);
     setPreview(g);
   };
-  const down = (e: PE<HTMLDivElement>) => {
+  const down = (e: PE) => {
+    const pan = tool === "hand" || space || e.button === 1;
     if (
-      (e.target as HTMLElement)?.closest?.(
-        "button,input,textarea,a,iframe,video,audio,[data-ui]",
-      )
+      (e.target as HTMLElement)?.closest?.("[data-ui]") ||
+      (!pan && (e.target as HTMLElement)?.closest?.("button,input,textarea,a,iframe,video,audio"))
     )
       return;
     if (e.button !== 0 && e.button !== 1) return;
@@ -669,7 +675,10 @@ export default function App({ initial }: { initial?: Workspace }) {
     setMenu(false);
     setContext(null);
     setEditing(null);
-    if (space || e.button === 1) {
+    setInteracting(null);
+    if (pan) {
+      e.preventDefault();
+      setSnapTarget(null);
       begin("pan", e);
       return;
     }
@@ -741,6 +750,7 @@ export default function App({ initial }: { initial?: Workspace }) {
       return;
     }
     if (tool !== "select") return;
+    setInteracting(null);
     setSelectedConnection(null);
     e.stopPropagation();
     setEditing(null);
@@ -757,7 +767,7 @@ export default function App({ initial }: { initial?: Workspace }) {
   };
   const move = (e: PE) => {
     lastPointer.current = point(e.clientX, e.clientY);
-    if (tool === "connect" || gesture.current?.kind === "connect") {
+    if ((tool === "connect" && !space && gesture.current?.kind !== "pan") || gesture.current?.kind === "connect") {
       setSnapTarget(snapConnection(board.items, lastPointer.current, 18 / zoom,
         gesture.current?.from || connecting || undefined)?.id || null);
     }
@@ -782,9 +792,10 @@ export default function App({ initial }: { initial?: Workspace }) {
     if (!g) return;
     const p = point(e.clientX, e.clientY);
     if (g.kind === "pan") {
+      const dx = e.clientX - g.origin.x, dy = e.clientY - g.origin.y;
       setOffset((o) => ({
-        x: o.x + e.clientX - g.origin.x,
-        y: o.y + e.clientY - g.origin.y,
+        x: o.x + dx,
+        y: o.y + dy,
       }));
       g.origin = { x: e.clientX, y: e.clientY };
       return;
@@ -1081,12 +1092,13 @@ export default function App({ initial }: { initial?: Workspace }) {
       } else if (!mod) {
         const tools: Record<string, Tool> = {
           v: "select",
+          h: "hand",
           t: "text",
           p: "draw",
           c: "connect",
           s: "shape",
         };
-        if (tools[e.key]) chooseTool(tools[e.key]);
+        if (tools[e.key.toLowerCase()]) chooseTool(tools[e.key.toLowerCase()]);
         if (e.key === "?") setModal("help");
         if (e.key === "n") {
           setShape("note");
@@ -1275,6 +1287,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     if (search && searchOpen) jump(0);
   }, [search]);
   const active = board.items.find((i) => i.id === selected[0]);
+  const selectedBounds = selected.length > 1 ? bounds(board.items.filter((i) => selected.includes(i.id))) : null;
   const activeConnection = board.connections.find((c) => c.id === selectedConnection);
   const currentRoute = activeConnection ? activeConnection.route || "straight"
     : active?.arrow ? active.route || "straight" : route;
@@ -1310,11 +1323,13 @@ export default function App({ initial }: { initial?: Workspace }) {
   });
   const toolButtons = [
     { id: "select", Icon: MousePointer2, label: "Select", key: "V" },
+    { id: "hand", Icon: Hand, label: "Hand", key: "H" },
     { id: "text", Icon: Type, label: "Text", key: "T" },
     { id: "draw", Icon: PenLine, label: "Draw", key: "P" },
     { id: "connect", Icon: MoveUpRight, label: "Connector", key: "C" },
     { id: "shape", Icon: Shapes, label: "Shapes", key: "S" },
   ] as const;
+  const effectiveTool = tool === "hand" || space || preview?.kind === "pan" ? "hand" : tool;
   return (
     <div className="app">
       <header className="topbar">
@@ -1501,8 +1516,20 @@ export default function App({ initial }: { initial?: Workspace }) {
       ) : (
         <main
           ref={canvas}
-          className={`canvas tool-${tool} ${space ? "panning" : ""}`}
+          className={`canvas tool-${tool} ${effectiveTool === "hand" ? "panning" : ""} ${preview?.kind === "pan" ? "is-panning" : ""} ${preview?.kind === "drag" ? "is-dragging" : ""}`}
+          onPointerDownCapture={(e) => {
+            if ((e.button !== 0 && e.button !== 1) ||
+                (e.target as HTMLElement)?.closest?.("[data-ui]")) return;
+            if (tool === "hand" || space || e.button === 1) {
+              // Capture panning before item, link, media, or endpoint handlers.
+              e.stopPropagation();
+              down(e);
+            }
+          }}
           onPointerDown={down}
+          onAuxClickCapture={(e) => {
+            if (e.button === 1 && !(e.target as HTMLElement)?.closest?.("[data-ui]")) e.preventDefault();
+          }}
           onPointerMove={move}
           onPointerUp={up}
           onPointerCancel={(e) => {
@@ -1592,6 +1619,19 @@ export default function App({ initial }: { initial?: Workspace }) {
                 );
               })}
             </svg>
+            {selectedBounds && tool === "select" && (
+              <div className="group-selection" aria-label="Drag selected elements"
+                style={{ left: selectedBounds.x - 6, top: selectedBounds.y - 6,
+                  width: selectedBounds.w + 12, height: selectedBounds.h + 12 }}
+                onPointerDown={(e) => {
+                  if (e.button !== 0 || e.shiftKey) return;
+                  e.stopPropagation();
+                  setInteracting(null);
+                  setEditing(null);
+                  begin("drag", e, selected);
+                }}
+                onDoubleClick={(e) => e.stopPropagation()} />
+            )}
             {board.items.map((i) => (
               <div
                 key={i.id}
@@ -1617,6 +1657,11 @@ export default function App({ initial }: { initial?: Workspace }) {
                 onPointerDown={(e) => itemDown(e, i)}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
+                  if (tool !== "select" || space) return;
+                  if (["link", "video", "audio"].includes(i.kind)) {
+                    setSelected([i.id]);
+                    setInteracting(i.id);
+                  }
                   if (["text", "note", "shape"].includes(i.kind)) {
                     setSelected([i.id]);
                     setEditing(i.id);
@@ -1705,7 +1750,8 @@ export default function App({ initial }: { initial?: Workspace }) {
                         allowFullScreen
                         style={{
                           pointerEvents:
-                            tool === "select" && !space ? "auto" : "none",
+                            tool === "select" && !space && preview?.kind !== "pan" &&
+                            (!selected.includes(i.id) || interacting === i.id) ? "auto" : "none",
                         }}
                       />
                     ) : (
@@ -1732,6 +1778,20 @@ export default function App({ initial }: { initial?: Workspace }) {
                 )}
                 {selected.includes(i.id) && (
                   <>
+                    {["link", "video", "audio"].includes(i.kind) && tool === "select" && (
+                      <>
+                        {interacting !== i.id && <div className="media-drag-surface" aria-label={`Drag ${i.text || "media"}`} />}
+                        <button className="media-interact" aria-label={interacting === i.id ? "Done interacting" : "Interact with media"}
+                          onClick={() => {
+                            setSelected([i.id]);
+                            setInteracting(interacting === i.id ? null : i.id);
+                          }}>{interacting === i.id ? "Done interacting" : "Interact"}</button>
+                      </>
+                    )}
+                    {tool === "select" && <div className="selection-drag-frame" aria-label="Drag selected element">
+                      <span className="drag-edge top" /><span className="drag-edge right" />
+                      <span className="drag-edge bottom" /><span className="drag-edge left" />
+                    </div>}
                     <span className="selection-handle tl" />
                     <span className="selection-handle tr" />
                     <span className="selection-handle bl" />
@@ -2080,18 +2140,18 @@ export default function App({ initial }: { initial?: Workspace }) {
             {toolButtons.map((t) => (
               <button
                 key={t.id}
-                className={tool === t.id ? "active" : ""}
+                className={effectiveTool === t.id ? "active" : ""}
                 aria-label={t.label}
-                aria-pressed={tool === t.id}
-                title={`${t.label} (${t.key}), double-click to lock`}
+                aria-pressed={effectiveTool === t.id}
+                title={`${t.label} (${t.key})${t.id === "hand" || t.id === "select" ? "" : ", double-click to lock"}`}
                 onClick={() => chooseTool(t.id)}
                 onDoubleClick={() => {
                   chooseTool(t.id);
-                  setLocked(!locked);
+                  if (t.id !== "hand" && t.id !== "select") setLocked(!locked);
                 }}
               >
                 <t.Icon size={19} />
-                {locked && tool === t.id && (
+                {locked && effectiveTool === t.id && t.id !== "hand" && t.id !== "select" && (
                   <LockKeyhole className="locked" size={8} />
                 )}
               </button>
@@ -2379,12 +2439,14 @@ export default function App({ initial }: { initial?: Workspace }) {
                 <div className="shortcut-grid">
                   {[
                     ["Select", "V"],
+                    ["Hand", "H"],
                     ["Text", "T"],
                     ["Draw", "P"],
                     ["Connector", "C"],
                     ["Shapes", "S"],
                     ["Sticky note", "N"],
                     ["Pan from any tool", "Space + drag"],
+                    ["Temporary Hand mode", "Middle mouse + drag"],
                     ["Select all", "⌘ / Ctrl A"],
                     ["Undo", "⌘ / Ctrl Z"],
                     ["Redo", "⇧ ⌘ / Ctrl Z"],

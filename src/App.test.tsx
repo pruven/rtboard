@@ -69,6 +69,152 @@ describe("theme switching", () => {
     expect(document.documentElement.dataset.theme).toBe("light");
   });
 });
+describe("Select and Hand modes", () => {
+  const withNode = () => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "node", kind: "shape", x: 0, y: 0, w: 100, h: 100, text: "Node" }];
+    return render(<App initial={initial} />);
+  };
+
+  it("switches between Select (V) and Hand (H), panning over selected items without moving or editing them", () => {
+    const { container } = withNode();
+    const canvas = container.querySelector(".canvas")!;
+    const node = container.querySelector<HTMLElement>('[data-item-id="node"]')!;
+    fireEvent.pointerDown(node, { button: 0, clientX: 50, clientY: 50, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 50, clientY: 50, pointerId: 1 });
+    fireEvent.keyDown(window, { key: "h" });
+    expect(screen.getByRole("button", { name: "Hand" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.pointerDown(node, { button: 0, clientX: 50, clientY: 50, pointerId: 2 });
+    expect(canvas.classList.contains("is-panning")).toBe(true);
+    fireEvent.pointerMove(canvas, { clientX: 150, clientY: 120, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 150, clientY: 120, pointerId: 2 });
+    expect(container.querySelector<HTMLElement>(".world")!.style.transform).toBe("translate(100px,70px) scale(1)");
+    expect(node.style.left).toBe("0px");
+    expect(node.style.top).toBe("0px");
+    expect(node.classList.contains("selected")).toBe(true);
+    expect(canvas.classList.contains("is-panning")).toBe(false);
+    fireEvent.doubleClick(node);
+    expect(screen.queryByLabelText("Edit text")).toBeNull();
+    fireEvent.keyDown(window, { key: "v" });
+    expect(screen.getByRole("button", { name: "Select" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.pointerDown(node, { button: 0, clientX: 150, clientY: 120, pointerId: 3 });
+    fireEvent.pointerMove(canvas, { clientX: 170, clientY: 120, pointerId: 3 });
+    fireEvent.pointerUp(canvas, { clientX: 170, clientY: 120, pointerId: 3 });
+    expect(node.style.left).toBe("20px");
+  });
+
+  it.each(["Select", "Draw", "Connector", "Text", "Shapes"])("temporarily pans with the middle mouse button and restores %s", (tool) => {
+    const { container } = withNode();
+    const canvas = container.querySelector(".canvas")!;
+    const node = container.querySelector<HTMLElement>('[data-item-id="node"]')!;
+    const button = screen.getByRole("button", { name: tool });
+    fireEvent.click(button);
+    if (tool === "Draw") fireEvent.doubleClick(button);
+    expect(fireEvent.pointerDown(node, { button: 1, clientX: 50, clientY: 50, pointerId: 1 })).toBe(false);
+    expect(screen.getByRole("button", { name: "Hand" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.pointerMove(canvas, { clientX: 150, clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { button: 1, clientX: 150, clientY: 100, pointerId: 1 });
+    expect(container.querySelector<HTMLElement>(".world")!.style.transform).toBe("translate(100px,50px) scale(1)");
+    expect(node.style.left).toBe("0px");
+    expect(node.style.top).toBe("0px");
+    expect(container.querySelectorAll(".board-item")).toHaveLength(1);
+    expect(container.querySelectorAll(".connector-line")).toHaveLength(0);
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    if (tool === "Draw") expect(button.querySelector(".locked")).toBeTruthy();
+  });
+
+  it("pans over resize handles and links, suppresses middle-click navigation, and restores the tool on cancel or blur", () => {
+    const { container } = withNode();
+    const canvas = container.querySelector(".canvas")!;
+    const node = container.querySelector<HTMLElement>('[data-item-id="node"]')!;
+    fireEvent.pointerDown(node, { button: 0, clientX: 50, clientY: 50, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 50, clientY: 50, pointerId: 1 });
+    fireEvent.pointerDown(screen.getByTitle("Drag to resize"), { button: 1, clientX: 100, clientY: 100, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 120, clientY: 130, pointerId: 2 });
+    fireEvent.pointerCancel(canvas, { pointerId: 2 });
+    expect(node.style.width).toBe("100px");
+    expect(node.style.height).toBe("100px");
+    expect(screen.getByRole("button", { name: "Select" }).getAttribute("aria-pressed")).toBe("true");
+    const link = document.createElement("a");
+    link.href = "https://example.com/";
+    canvas.append(link);
+    expect(fireEvent.pointerDown(link, { button: 1, clientX: 100, clientY: 100, pointerId: 3 })).toBe(false);
+    expect(fireEvent(link, new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }))).toBe(false);
+    fireEvent.blur(window);
+    expect(canvas.classList.contains("is-panning")).toBe(false);
+    expect(screen.getByRole("button", { name: "Select" }).getAttribute("aria-pressed")).toBe("true");
+    link.remove();
+  });
+
+  it("keeps Space-drag as a temporary Hand shortcut", () => {
+    const { container } = withNode();
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.click(screen.getByRole("button", { name: "Connector" }));
+    fireEvent.keyDown(window, { code: "Space", key: " " });
+    expect(screen.getByRole("button", { name: "Hand" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 200, clientY: 200, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 240, clientY: 260, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 240, clientY: 260, pointerId: 1 });
+    fireEvent.keyUp(window, { code: "Space", key: " " });
+    expect(container.querySelector<HTMLElement>(".world")!.style.transform).toBe("translate(40px,60px) scale(1)");
+    expect(screen.getByRole("button", { name: "Connector" }).getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+describe("dragging selected elements", () => {
+  it.each(["link", "video", "audio"] as const)("drags selected %s media and provides an explicit playback interaction", (kind) => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "media", kind, x: 20, y: 30, w: 300, h: 200, text: "Media",
+      src: kind === "link" ? "https://www.instagram.com/reel/abc/" : `https://example.com/media.${kind === "video" ? "mp4" : "mp3"}` }];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+    const item = container.querySelector<HTMLElement>('[data-item-id="media"]')!;
+    fireEvent.pointerDown(screen.getByLabelText("Drag Media"), { button: 0, clientX: 50, clientY: 60, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 100, clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 100, clientY: 100, pointerId: 1 });
+    expect(item.style.left).toBe("70px");
+    expect(item.style.top).toBe("70px");
+    fireEvent.click(screen.getByRole("button", { name: "Interact with media" }));
+    expect(container.querySelector(".media-drag-surface")).toBeNull();
+    if (kind === "link") expect(item.querySelector("iframe")!.style.pointerEvents).toBe("auto");
+    // The border stays draggable even while the media itself accepts input.
+    fireEvent.pointerDown(item.querySelector(".drag-edge.right")!, { button: 0, clientX: 370, clientY: 100, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 390, clientY: 110, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 390, clientY: 110, pointerId: 2 });
+    expect(item.style.left).toBe("90px");
+    expect(item.style.top).toBe("80px");
+    expect(container.querySelector(".media-drag-surface")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(item.style.left).toBe("70px");
+    expect(item.style.top).toBe("70px");
+  });
+
+  it("drags a multiselection from its empty space and preserves middle-button panning", () => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "a", kind: "shape", x: 0, y: 0, w: 100, h: 100, text: "A" },
+      { id: "b", kind: "shape", x: 300, y: 0, w: 100, h: 100, text: "B" },
+    ];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+    fireEvent.pointerDown(screen.getByLabelText("Drag selected elements"), { button: 0, clientX: 200, clientY: 50, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 240, clientY: 80, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 240, clientY: 80, pointerId: 1 });
+    const a = container.querySelector<HTMLElement>('[data-item-id="a"]')!;
+    const b = container.querySelector<HTMLElement>('[data-item-id="b"]')!;
+    expect([a.style.left, b.style.left]).toEqual(["40px", "340px"]);
+    expect([a.style.top, b.style.top]).toEqual(["30px", "30px"]);
+    fireEvent.pointerDown(screen.getByLabelText("Drag selected elements"), { button: 1, clientX: 240, clientY: 80, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 280, clientY: 110, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { button: 1, clientX: 280, clientY: 110, pointerId: 2 });
+    expect([a.style.left, b.style.left]).toEqual(["40px", "340px"]);
+    expect(container.querySelector<HTMLElement>(".world")!.style.transform).toBe("translate(40px,30px) scale(1)");
+    expect(container.querySelectorAll(".board-item.selected")).toHaveLength(2);
+  });
+});
+
 describe("canvas workflow", () => {
   it.each(["start", "end"] as const)("keeps a snapped %s endpoint attached when the other end is free", (endpoint) => {
     const initial = seed();
@@ -288,7 +434,7 @@ describe("canvas workflow", () => {
       "value",
       "Untitled board",
     );
-    expect(screen.getAllByRole("button", { pressed: false })).toHaveLength(4);
+    expect(screen.getAllByRole("button", { pressed: false })).toHaveLength(5);
   });
   it("creates text at a double-click, saves it, and restores it after reload", async () => {
     const first = render(<App initial={seed()} />);
@@ -369,6 +515,8 @@ describe("canvas workflow", () => {
     expect(player.querySelector("script[src]")?.getAttribute("src")).toBe(
       "https://www.instagram.com/embed.js",
     );
+    expect(frame.style.pointerEvents).toBe("none");
+    fireEvent.click(screen.getByRole("button", { name: "Interact with media" }));
     expect(frame.style.pointerEvents).toBe("auto");
     expect(frame.allow).toContain("autoplay");
     fireEvent.keyDown(window, { key: "f", ctrlKey: true });
