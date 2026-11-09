@@ -37,6 +37,9 @@ export type Item = {
   arrow?: boolean;
   route?: ConnectorRoute;
   arrowheads?: ConnectorArrowheads;
+  startBinding?: string;
+  endBinding?: string;
+  bindingsInitialized?: boolean;
 };
 export type Connection = { id: string; from: string; to: string; route?: ConnectorRoute; arrowheads?: ConnectorArrowheads };
 export type Board = {
@@ -233,6 +236,9 @@ export function validateBoard(input: unknown): Board {
       arrow: !!i.arrow,
       route: connectorRoute(i.route),
       arrowheads: connectorArrowheads(i.arrowheads),
+      startBinding: typeof i.startBinding === "string" ? i.startBinding : undefined,
+      endBinding: typeof i.endBinding === "string" ? i.endBinding : undefined,
+      bindingsInitialized: i.bindingsInitialized === true,
     };
   });
   const connections = (Array.isArray(b.connections) ? b.connections : [])
@@ -240,13 +246,13 @@ export function validateBoard(input: unknown): Board {
       (c) => c && typeof c.id === "string" && ids.has(c.from) && ids.has(c.to),
     )
     .map((c) => ({ id: c.id, from: c.from, to: c.to, route: connectorRoute(c.route), arrowheads: connectorArrowheads(c.arrowheads) }));
-  return {
+  return updateArrowBindings({
     id: uid(),
     name: b.name.slice(0, 120),
     items,
     connections,
     updated: Date.now(),
-  };
+  }, true);
 }
 export function parseBoardFile(text: string): Board {
   if (text.trimStart().startsWith("<")) {
@@ -276,7 +282,11 @@ export function duplicateItems(
   return {
     board: {
       ...board,
-      items: [...board.items, ...copies],
+      items: [...board.items, ...copies.map((i) => ({
+        ...i,
+        startBinding: i.startBinding ? map.get(i.startBinding) || i.startBinding : undefined,
+        endBinding: i.endBinding ? map.get(i.endBinding) || i.endBinding : undefined,
+      }))],
       connections: [
         ...board.connections,
         ...board.connections
@@ -351,7 +361,7 @@ export function connectionGeometry(a: Item, b: Item, route: ConnectorRoute = "st
 }
 
 export function snapConnection(items: Item[], p: Point, radius: number, exclude?: string) {
-  const candidates = [...items].reverse().filter((i) => i.id !== exclude);
+  const candidates = [...items].reverse().filter((i) => i.id !== exclude && !(i.kind === "drawing" && i.arrow));
   let closest: Item | undefined, distance = Infinity;
   for (const i of candidates) {
     const dx = Math.max(i.x - p.x, 0, p.x - i.x - i.w);
@@ -360,6 +370,43 @@ export function snapConnection(items: Item[], p: Point, radius: number, exclude?
     if (d <= radius && d < distance) { closest = i; distance = d; }
   }
   return closest;
+}
+
+export function arrowEndpoints(i: Item) {
+  const first = i.points?.[0] || [0, 0], last = i.points?.at(-1) || first;
+  return { a: { x: i.x + first[0], y: i.y + first[1] }, b: { x: i.x + last[0], y: i.y + last[1] } };
+}
+
+export function positionArrow(i: Item, a: Point, b: Point): Item {
+  const x = Math.min(a.x, b.x) - 5, y = Math.min(a.y, b.y) - 5;
+  return { ...i, x, y, w: Math.abs(b.x - a.x) + 10, h: Math.abs(b.y - a.y) + 10,
+    points: [[a.x - x, a.y - y], [b.x - x, b.y - y]] };
+}
+
+// Resolve bindings on every board mutation so movement, resizing, nudges, and
+// undo all update the same persisted geometry used by renderers and exports.
+export function updateArrowBindings(board: Board, repairLegacy = false): Board {
+  const targets = board.items.filter((i) => !(i.kind === "drawing" && i.arrow));
+  const byId = new Map(targets.map((i) => [i.id, i]));
+  return { ...board, items: board.items.map((i) => {
+    if (i.kind !== "drawing" || !i.arrow || !i.points || i.points.length < 2) return i;
+    const ends = arrowEndpoints(i);
+    let startBinding = i.startBinding, endBinding = i.endBinding;
+    if (repairLegacy && !i.bindingsInitialized) {
+      startBinding ||= snapConnection(targets, ends.a, 18)?.id;
+      endBinding ||= snapConnection(targets, ends.b, 18, startBinding)?.id;
+    }
+    const source = startBinding ? byId.get(startBinding) : undefined;
+    const target = endBinding ? byId.get(endBinding) : undefined;
+    if (source || target) {
+      const ghost = (p: Point) => ({ x: p.x - 0.5, y: p.y - 0.5, w: 1, h: 1 });
+      const points = connectionPoints(source || ghost(ends.a), target || ghost(ends.b), i.route);
+      if (source) ends.a = points.a;
+      if (target) ends.b = points.b;
+    }
+    const binding = { ...i, startBinding: source?.id, endBinding: target?.id, bindingsInitialized: true };
+    return source || target ? positionArrow(binding, ends.a, ends.b) : binding;
+  }) };
 }
 export function download(
   name: string,

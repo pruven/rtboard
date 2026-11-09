@@ -4,6 +4,7 @@ import {
   type Item, createBoard, connectionPoints, connectorPath, snapConnection,
   connectionGeometry,
   connectorArrowheads, connectorMarkers,
+  updateArrowBindings, arrowEndpoints,
   duplicateItems, validateBoard, shareHtml, parseBoardFile,
 } from "./model";
 
@@ -11,6 +12,38 @@ const a: Item = { id: "a", kind: "shape", x: 0, y: 0, w: 100, h: 100, text: "" }
 const b: Item = { ...a, id: "b", x: 300, y: 200 };
 
 describe("connector routing", () => {
+  it.each(["start", "end"] as const)("keeps an independently bound %s endpoint attached through moves and resizing", (endpoint) => {
+    const arrow: Item = { ...a, id: "arrow", kind: "drawing", arrow: true,
+      x: 50, y: 50, points: [[0, 0], [200, 100]], bindingsInitialized: true,
+      [endpoint === "start" ? "startBinding" : "endBinding"]: "a", route: "elbow" };
+    const board = updateArrowBindings({ ...createBoard(), items: [a, arrow] });
+    const before = arrowEndpoints(board.items[1]);
+    const moved = updateArrowBindings({ ...board, items: [{ ...a, x: 80, y: 40, w: 140 }, board.items[1]] });
+    const after = arrowEndpoints(moved.items[1]);
+    const expected = connectionPoints(moved.items[0], {
+      x: (endpoint === "start" ? before.b : before.a).x - 0.5,
+      y: (endpoint === "start" ? before.b : before.a).y - 0.5, w: 1, h: 1,
+    }, "elbow").a;
+    expect(endpoint === "start" ? after.a : after.b).toEqual(expected);
+    expect(endpoint === "start" ? after.b : after.a).toEqual(endpoint === "start" ? before.b : before.a);
+    const restored = parseBoardFile(shareHtml(moved));
+    expect(restored.items[1][endpoint === "start" ? "startBinding" : "endBinding"]).toBe("a");
+    const duplicated = duplicateItems(moved, ["a", "arrow"]);
+    expect(duplicated.board.items.at(-1)![endpoint === "start" ? "startBinding" : "endBinding"]).toBe(duplicated.ids[0]);
+  });
+
+  it("repairs old snapped drawings once, ignores connector hit boxes, and preserves explicit detached endpoints", () => {
+    const arrow: Item = { ...a, id: "arrow", kind: "drawing", arrow: true, x: 100, y: 50, points: [[0, 0], [200, 200]] };
+    const board = updateArrowBindings({ ...createBoard(), items: [a, b, arrow] }, true);
+    expect(board.items[2]).toMatchObject({ startBinding: "a", endBinding: "b", bindingsInitialized: true });
+    expect(snapConnection([arrow], { x: 110, y: 60 }, 18)).toBeUndefined();
+    const detached = updateArrowBindings({ ...board, items: [a, b, { ...board.items[2], startBinding: undefined }] }, true);
+    expect(detached.items[2].startBinding).toBeUndefined();
+    const deleted = updateArrowBindings({ ...board, items: [b, board.items[2]] });
+    expect(deleted.items[1].startBinding).toBeUndefined();
+    expect(deleted.items[1].endBinding).toBe("b");
+  });
+
   it("snaps nearby endpoints, excludes the source, and prefers the nearest/topmost element", () => {
     expect(snapConnection([a, b], { x: 288, y: 250 }, 18, "a")?.id).toBe("b");
     expect(snapConnection([a, b], { x: 280, y: 250 }, 18, "a")).toBeUndefined();

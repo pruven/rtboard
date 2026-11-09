@@ -61,6 +61,9 @@ import {
   connectorArrowheads,
   connectorMarkers,
   snapConnection,
+  arrowEndpoints,
+  positionArrow,
+  updateArrowBindings,
   download,
   shareHtml,
   packageBoard,
@@ -83,6 +86,8 @@ type Gesture = {
   points: number[][];
   from?: string;
   connectionId?: string;
+  arrowId?: string;
+  fixedPoint?: Point;
   endpoint?: "from" | "to";
   selection?: string[];
 };
@@ -99,7 +104,10 @@ type BackupDirectory = {
 };
 export default function App({ initial }: { initial?: Workspace }) {
   const [workspace, setWorkspace] = useState<Workspace>(
-    () => initial || readLegacy(),
+    () => {
+      const loaded = initial || readLegacy();
+      return { ...loaded, boards: loaded.boards.map((b) => updateArrowBindings(b, true)) };
+    },
   );
   const fallback = useRef(createBoard());
   const board =
@@ -177,6 +185,7 @@ export default function App({ initial }: { initial?: Workspace }) {
       setHistory((h) => [...h.slice(-79), previous]);
       setFuture([]);
     }
+    next = updateArrowBindings(next);
     current.current = next;
     setWorkspace((w) => ({
       ...w,
@@ -707,6 +716,11 @@ export default function App({ initial }: { initial?: Workspace }) {
       begin("pan", e);
       return;
     }
+    if (tool === "connect" && i.kind === "drawing" && i.arrow) {
+      e.stopPropagation();
+      down(e as PE<HTMLDivElement>);
+      return;
+    }
     if (tool === "connect") {
       e.stopPropagation();
       if (connecting && connecting !== i.id) {
@@ -840,6 +854,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     gesture.current = null;
     setPreview(null);
     if (!g) return;
+    if (g.kind === "connect") g.last = point(e.clientX, e.clientY);
     const dx = g.last.x - g.start.x,
       dy = g.last.y - g.start.y,
       moved = Math.hypot(dx, dy) > 3 / zoom;
@@ -886,8 +901,21 @@ export default function App({ initial }: { initial?: Workspace }) {
         },
       ]);
     }
-    if (g.kind === "connect" && (moved || g.connectionId)) {
+    if (g.kind === "connect" && (moved || g.connectionId || g.arrowId)) {
       const to = snapConnection(board.items, point(e.clientX, e.clientY), 18 / zoom, g.from);
+      if (g.arrowId) {
+        const release = point(e.clientX, e.clientY);
+        change({ ...board, items: board.items.map((i) => {
+          if (i.id !== g.arrowId) return i;
+          const ends = arrowEndpoints(i);
+          if (g.endpoint === "from") ends.a = release;
+          else ends.b = release;
+          return positionArrow({ ...i, bindingsInitialized: true,
+            [g.endpoint === "from" ? "startBinding" : "endBinding"]: to?.id }, ends.a, ends.b);
+        }) });
+        setSnapTarget(null);
+        return;
+      }
       if (g.connectionId) {
         if (to) change({ ...board, connections: board.connections.map((c) =>
           c.id === g.connectionId ? { ...c, [g.endpoint!]: to.id } : c) });
@@ -919,6 +947,9 @@ export default function App({ initial }: { initial?: Workspace }) {
             arrow: true,
             route,
             arrowheads,
+            startBinding: g.from,
+            endBinding: to?.id,
+            bindingsInitialized: true,
             points: [
               [g.start.x - x, g.start.y - y],
               [g.last.x - x, g.last.y - y],
@@ -1250,19 +1281,23 @@ export default function App({ initial }: { initial?: Workspace }) {
   const currentArrowheads = connectorArrowheads(activeConnection ? activeConnection.arrowheads
     : active?.arrow ? active.arrowheads : arrowheads);
   const previewArrowheads = preview?.connectionId
-    ? board.connections.find((c) => c.id === preview.connectionId)?.arrowheads : arrowheads;
+    ? board.connections.find((c) => c.id === preview.connectionId)?.arrowheads
+    : preview?.arrowId ? board.items.find((i) => i.id === preview.arrowId)?.arrowheads : arrowheads;
   const previewRoute = preview?.connectionId
     ? board.connections.find((c) => c.id === preview.connectionId)?.route || "straight"
-    : route;
+    : preview?.arrowId ? board.items.find((i) => i.id === preview.arrowId)?.route || "straight" : route;
   const previewSource = board.items.find((i) => i.id === preview?.from);
   const previewTarget = board.items.find((i) => i.id === snapTarget);
   const previewOther: Item | undefined = preview && (previewTarget || {
     id: "preview", kind: "shape", text: "", ...preview.last, w: 1, h: 1,
   }) || undefined;
-  const previewPath = previewSource && previewOther
+  const previewFixed: Item | undefined = previewSource || (preview?.fixedPoint ? {
+    id: "fixed", kind: "shape", text: "", x: preview.fixedPoint.x - 0.5, y: preview.fixedPoint.y - 0.5, w: 1, h: 1,
+  } : undefined);
+  const previewPath = previewFixed && previewOther
     ? connectionGeometry(
-      preview?.endpoint === "from" ? previewOther : previewSource,
-      preview?.endpoint === "from" ? previewSource : previewOther,
+      preview?.endpoint === "from" ? previewOther : previewFixed,
+      preview?.endpoint === "from" ? previewFixed : previewOther,
       previewRoute,
     ).d
     : connectorPath(preview?.start || { x: 0, y: 0 }, preview?.last || { x: 0, y: 0 }, previewRoute).d;
@@ -1735,11 +1770,11 @@ export default function App({ initial }: { initial?: Workspace }) {
                 }}
               />
             )}
-            {activeConnection && !preview && (() => {
-              const a = board.items.find((i) => i.id === activeConnection.from);
-              const b = board.items.find((i) => i.id === activeConnection.to);
-              if (!a || !b) return null;
-              const ends = connectionPoints(a, b, activeConnection.route);
+            {(activeConnection || active?.arrow) && !preview && (() => {
+              const a = board.items.find((i) => i.id === activeConnection?.from);
+              const b = board.items.find((i) => i.id === activeConnection?.to);
+              if (activeConnection && (!a || !b)) return null;
+              const ends = activeConnection ? connectionPoints(a!, b!, activeConnection.route) : arrowEndpoints(active!);
               return <svg className="connections connector-handles">
                 {(["from", "to"] as const).map((endpoint) => {
                   const p = endpoint === "from" ? ends.a : ends.b;
@@ -1747,9 +1782,13 @@ export default function App({ initial }: { initial?: Workspace }) {
                     className="connector-endpoint" aria-label={`Reconnect ${endpoint === "from" ? "start" : "end"}`}
                     onPointerDown={(e) => {
                       e.stopPropagation();
-                      const fixed = endpoint === "from" ? activeConnection.to : activeConnection.from;
+                      const fixed = activeConnection
+                        ? endpoint === "from" ? activeConnection.to : activeConnection.from
+                        : endpoint === "from" ? active!.endBinding : active!.startBinding;
                       begin("connect", e, [], fixed);
-                      gesture.current!.connectionId = activeConnection.id;
+                      gesture.current!.connectionId = activeConnection?.id;
+                      gesture.current!.arrowId = activeConnection ? undefined : active!.id;
+                      gesture.current!.fixedPoint = endpoint === "from" ? ends.b : ends.a;
                       gesture.current!.endpoint = endpoint;
                       setPreview({ ...gesture.current! });
                     }} />;

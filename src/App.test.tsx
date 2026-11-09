@@ -70,6 +70,54 @@ describe("theme switching", () => {
   });
 });
 describe("canvas workflow", () => {
+  it.each(["start", "end"] as const)("keeps a snapped %s endpoint attached when the other end is free", (endpoint) => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "node", kind: "shape", x: 300, y: 200, w: 100, h: 100, text: "Node" }];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    const start = endpoint === "start" ? { x: 288, y: 250 } : { x: 50, y: 250 };
+    const end = endpoint === "end" ? { x: 288, y: 250 } : { x: 50, y: 250 };
+    fireEvent.keyDown(window, { key: "c" });
+    fireEvent.pointerDown(canvas, { button: 0, clientX: start.x, clientY: start.y, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: end.x, clientY: end.y, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: end.x, clientY: end.y, pointerId: 1 });
+    const line = () => container.querySelector<HTMLElement>(".item-drawing")!;
+    const path = () => line().querySelector("path")!.getAttribute("d");
+    const beforeX = Number.parseFloat(line().style.left);
+    const beforePath = path();
+    fireEvent.pointerDown(container.querySelector('[data-item-id="node"]')!, { button: 0, clientX: 350, clientY: 250, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 450, clientY: 250, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 450, clientY: 250, pointerId: 2 });
+    // The free endpoint remains at x=50 while the bound endpoint moves 300→400.
+    expect(Number.parseFloat(line().style.left)).toBe(beforeX);
+    expect(path()).not.toBe(beforePath);
+    expect(path()).toContain(endpoint === "start" ? "M 355 5" : "L 355 5");
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(path()).toBe(beforePath);
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
+    expect(path()).toContain(endpoint === "start" ? "M 355 5" : "L 355 5");
+  });
+
+  it("can bind an existing free connector endpoint and then follows its target", () => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "node", kind: "shape", x: 300, y: 200, w: 100, h: 100, text: "Node" },
+      { id: "arrow", kind: "drawing", x: 45, y: 245, w: 160, h: 10, text: "", arrow: true,
+        points: [[5, 5], [155, 5]], bindingsInitialized: true },
+    ];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.pointerDown(container.querySelector('[data-item-id="arrow"]')!, { button: 0, clientX: 200, clientY: 250, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 200, clientY: 250, pointerId: 1 });
+    fireEvent.pointerDown(screen.getByLabelText("Reconnect end"), { button: 0, clientX: 200, clientY: 250, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 288, clientY: 250, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 288, clientY: 250, pointerId: 2 });
+    fireEvent.pointerDown(container.querySelector('[data-item-id="node"]')!, { button: 0, clientX: 350, clientY: 250, pointerId: 3 });
+    fireEvent.pointerMove(canvas, { clientX: 450, clientY: 250, pointerId: 3 });
+    fireEvent.pointerUp(canvas, { clientX: 450, clientY: 250, pointerId: 3 });
+    expect(container.querySelector(".item-drawing path")!.getAttribute("d")).toBe("M 5 5 L 355 5");
+  });
+
   it.each(["Straight", "Curved", "Elbow"])("supports all arrowhead modes on %s connectors and their previews", (route) => {
     const initial = seed();
     initial.boards[0].items = [
