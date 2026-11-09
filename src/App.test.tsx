@@ -70,6 +70,109 @@ describe("theme switching", () => {
   });
 });
 describe("canvas workflow", () => {
+  it.each(["Straight", "Curved", "Elbow"])("supports all arrowhead modes on %s connectors and their previews", (route) => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "a", kind: "shape", x: 0, y: 0, w: 100, h: 100, text: "A" },
+      { id: "b", kind: "shape", x: 300, y: 200, w: 100, h: 100, text: "B" },
+    ];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "c" });
+    fireEvent.click(screen.getByRole("button", { name: route }));
+    expect(screen.getByRole("button", { name: "One end" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Both ends" }));
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 112, clientY: 50, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 288, clientY: 250, pointerId: 1 });
+    const preview = container.querySelector('.connections > path[stroke="var(--selection)"]')!;
+    expect(preview.getAttribute("marker-start")).toBe("url(#arrow)");
+    expect(preview.getAttribute("marker-end")).toBe("url(#arrow)");
+    fireEvent.pointerUp(canvas, { clientX: 288, clientY: 250, pointerId: 1 });
+    const path = () => container.querySelector(".connector-line")!;
+    expect(path().getAttribute("marker-start")).toBe("url(#arrow)");
+    expect(path().getAttribute("marker-end")).toBe("url(#arrow)");
+    fireEvent.pointerDown(path(), { button: 0 });
+    fireEvent.click(screen.getByRole("button", { name: "None" }));
+    expect(path().getAttribute("marker-start")).toBeNull();
+    expect(path().getAttribute("marker-end")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "One end" }));
+    expect(path().getAttribute("marker-start")).toBeNull();
+    expect(path().getAttribute("marker-end")).toBe("url(#arrow)");
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(path().getAttribute("marker-end")).toBeNull();
+    expect(screen.getByRole("button", { name: "None" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps standalone connectors editable when arrowheads are set to None", () => {
+    const { container } = render(<App initial={seed()} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "c" });
+    fireEvent.click(screen.getByRole("button", { name: "None" }));
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 220, clientY: 120, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 220, clientY: 120, pointerId: 1 });
+    const path = () => container.querySelector(".item-drawing path")!;
+    expect(path().getAttribute("marker-start")).toBeNull();
+    expect(path().getAttribute("marker-end")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Both ends" }));
+    expect(path().getAttribute("marker-start")).toBe("url(#arrow)");
+    expect(path().getAttribute("marker-end")).toBe("url(#arrow)");
+  });
+
+  it("snaps routed connectors to elements, edits routes, reconnects endpoints, and follows moved elements", () => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "a", kind: "shape", x: 0, y: 0, w: 100, h: 100, text: "A" },
+      { id: "b", kind: "shape", x: 300, y: 200, w: 100, h: 100, text: "B" },
+      { id: "c", kind: "shape", x: 600, y: 200, w: 100, h: 100, text: "C" },
+    ];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "c" });
+    fireEvent.click(screen.getByRole("button", { name: "Elbow" }));
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 112, clientY: 50, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 288, clientY: 250, pointerId: 1 });
+    expect(container.querySelector('[data-item-id="b"]')!.classList.contains("snap-target")).toBe(true);
+    fireEvent.pointerUp(canvas, { clientX: 288, clientY: 250, pointerId: 1 });
+    const path = () => container.querySelector<SVGPathElement>(".connector-line")!;
+    expect(path().getAttribute("d")).toBe("M 100 50 L 200 50 L 200 250 L 300 250");
+    fireEvent.pointerDown(path(), { button: 0 });
+    fireEvent.click(screen.getByRole("button", { name: "Curved" }));
+    expect(path().getAttribute("d")).toContain(" C ");
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(path().getAttribute("d")).not.toContain(" C ");
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
+    expect(path().getAttribute("d")).toContain(" C ");
+    fireEvent.pointerDown(screen.getByLabelText("Reconnect end"), { button: 0, clientX: 300, clientY: 250, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 588, clientY: 250, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 588, clientY: 250, pointerId: 2 });
+    expect(path().getAttribute("d")).toBe("M 100 50 C 350 50 350 250 600 250");
+    fireEvent.pointerDown(screen.getByLabelText("Reconnect start"), { button: 0, clientX: 100, clientY: 50, pointerId: 4 });
+    fireEvent.pointerMove(canvas, { clientX: 900, clientY: 500, pointerId: 4 });
+    fireEvent.pointerUp(canvas, { clientX: 900, clientY: 500, pointerId: 4 });
+    expect(path().getAttribute("d")).toBe("M 100 50 C 350 50 350 250 600 250");
+    fireEvent.pointerDown(container.querySelector('[data-item-id="a"]')!, { button: 0, clientX: 50, clientY: 50, pointerId: 3 });
+    fireEvent.pointerMove(canvas, { clientX: 90, clientY: 50, pointerId: 3 });
+    fireEvent.pointerUp(canvas, { clientX: 90, clientY: 50, pointerId: 3 });
+    expect(path().getAttribute("d")).toBe("M 140 50 C 370 50 370 250 600 250");
+  });
+
+  it("keeps standalone arrows routed and supports cancelling a connector gesture", () => {
+    const { container } = render(<App initial={seed()} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "c" });
+    fireEvent.click(screen.getByRole("button", { name: "Curved" }));
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 220, clientY: 120, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 220, clientY: 120, pointerId: 1 });
+    expect(container.querySelector(".item-drawing path")!.getAttribute("d")).toContain(" C ");
+    fireEvent.keyDown(window, { key: "c" });
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 320, clientY: 20, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 520, clientY: 120, pointerId: 2 });
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.pointerUp(canvas, { clientX: 520, clientY: 120, pointerId: 2 });
+    expect(container.querySelectorAll(".item-drawing")).toHaveLength(1);
+  });
   it("copies and pastes connected selections through the system clipboard payload", () => {
     const initial = seed();
     initial.boards[0].items = [

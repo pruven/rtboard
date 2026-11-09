@@ -380,9 +380,43 @@ button svg {
   pointer-events: stroke;
   cursor: pointer;
 }
-.connector-line:hover {
+.connections g:hover .connector-line {
   stroke: var(--selection);
   stroke-width: 4;
+}
+.connector-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  vector-effect: non-scaling-stroke;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.connector-line.selected {
+  stroke: var(--selection);
+}
+.board-item.snap-target {
+  outline: 2px solid var(--selection);
+  outline-offset: 5px;
+}
+.connector-handles {
+  z-index: 2;
+}
+.connector-endpoint {
+  pointer-events: all;
+  cursor: crosshair;
+  fill: var(--panel);
+  stroke: var(--selection);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.property-row.connector-routes > button {
+  width: auto;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  padding: 6px 8px;
 }
 .marquee {
   position: absolute;

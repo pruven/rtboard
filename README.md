@@ -15,6 +15,8 @@ Open the URL Vite prints. `bun run build` produces `dist/` for any static host; 
 
 - A board library, compact header, full-screen dotted canvas, five-tool bottom toolbar, and light/dark themes.
 - Text, freehand drawings, rectangles, ellipses, sticky notes, and arrow connectors. Draw shapes by dragging; double-click text or a note to edit it.
+- Connectors offer Straight, Curved, and Elbow routes. Start and release near elements to snap to their edges; attached connectors follow elements as they move or resize. Select a connector to change its route or drag either endpoint to another element.
+- Choose One end, Both ends, or None for connector arrowheads. The setting applies to attached connectors and standalone connectors and is preserved in exports.
 - Font size, bold, italic, alignment, fill colors, border colors, and stroke widths.
 - Drag selection, Shift-click selection, group movement, duplication, layer order, resizing, arrow-key nudging, undo, and redo. Shift-resize preserves aspect ratio.
 - Paste links or text, or drag in media. Import lists of links from File. Image, video, and audio files up to 40 MB each are supported.

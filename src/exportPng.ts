@@ -2,7 +2,11 @@ import {
   type Board,
   type Item,
   bounds,
-  connectionPoints,
+  connectionGeometry,
+  connectorPath,
+  type ConnectorRoute,
+  type ConnectorArrowheads,
+  connectorArrowheads,
   downloadBlob,
 } from "./model";
 export async function exportPng(board: Board, dark: boolean) {
@@ -25,24 +29,20 @@ export async function exportPng(board: Board, dark: boolean) {
   ctx.fillRect(0, 0, box.w + 80, box.h + 80);
   ctx.translate(40 - box.x, 40 - box.y);
   const ink = dark ? "#fafafa" : "#0a0a0a";
-  const arrow = (x1: number, y1: number, x2: number, y2: number) => {
-    const angle = Math.atan2(y2 - y1, x2 - x1);
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(x2, y2);
-    ctx.lineTo(
-      x2 - 10 * Math.cos(angle - 0.4),
-      y2 - 10 * Math.sin(angle - 0.4),
-    );
-    ctx.moveTo(x2, y2);
-    ctx.lineTo(
-      x2 - 10 * Math.cos(angle + 0.4),
-      y2 - 10 * Math.sin(angle + 0.4),
-    );
-    ctx.stroke();
+  const arrow = (x1: number, y1: number, x2: number, y2: number, route?: ConnectorRoute,
+    path = connectorPath({ x: x1, y: y1 }, { x: x2, y: y2 }, route), arrowheads?: ConnectorArrowheads) => {
+    ctx.stroke(new Path2D(path.d));
+    const cap = (x: number, y: number, angle: number) => {
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - 10 * Math.cos(angle - 0.4), y - 10 * Math.sin(angle - 0.4));
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - 10 * Math.cos(angle + 0.4), y - 10 * Math.sin(angle + 0.4));
+      ctx.stroke();
+    };
+    const mode = connectorArrowheads(arrowheads);
+    if (mode !== "none") cap(x2, y2, Math.atan2(y2 - path.tail.y, x2 - path.tail.x));
+    if (mode === "both") cap(x1, y1, Math.atan2(y1 - path.head.y, x1 - path.head.x));
   };
   ctx.strokeStyle = dark ? "#aaa" : "#555";
   ctx.lineWidth = 2;
@@ -50,8 +50,8 @@ export async function exportPng(board: Board, dark: boolean) {
     const a = board.items.find((i) => i.id === c.from),
       b = board.items.find((i) => i.id === c.to);
     if (a && b) {
-      const p = connectionPoints(a, b);
-      arrow(p.a.x, p.a.y, p.b.x, p.b.y);
+      const p = connectionGeometry(a, b, c.route);
+      arrow(p.a.x, p.a.y, p.b.x, p.b.y, c.route, p, c.arrowheads);
     }
   }
   const text = (i: Item, padding: number, color: string) => {
@@ -129,6 +129,9 @@ export async function exportPng(board: Board, dark: boolean) {
           i.y + p[0][1],
           i.x + p.at(-1)![0],
           i.y + p.at(-1)![1],
+          i.route,
+          undefined,
+          i.arrowheads,
         );
       else {
         ctx.beginPath();

@@ -1,4 +1,4 @@
-import { type Board, embedUrl, connectionPoints } from "./model";
+import { type Board, embedUrl, connectionGeometry, connectorPath, connectorMarkers } from "./model";
 import { instagramEmbedDocument } from "./instagram";
 // Serialized into exported files. Keep this function independent of module scope.
 function viewer() {
@@ -37,16 +37,15 @@ function viewer() {
   defs.append(marker);
   svg.append(defs);
   for (const line of data.lines) {
-    const el = document.createElementNS(ns, "line");
+    const el = document.createElementNS(ns, "path");
     Object.entries({
-      x1: line.a.x,
-      y1: line.a.y,
-      x2: line.b.x,
-      y2: line.b.y,
+      d: line.d,
+      fill: "none",
       stroke: "#888",
       "stroke-width": 2,
-      "marker-end": "url(#arrow)",
     }).forEach(([k, v]) => el.setAttribute(k, String(v)));
+    if (line.markerStart) el.setAttribute("marker-start", line.markerStart);
+    if (line.markerEnd) el.setAttribute("marker-end", line.markerEnd);
     svg.append(el);
   }
   world.append(svg);
@@ -102,16 +101,21 @@ function viewer() {
     } else if (i.kind === "drawing") {
       const s = document.createElementNS(ns, "svg");
       s.setAttribute("viewBox", `0 0 ${i.w} ${i.h}`);
-      const p = document.createElementNS(ns, "polyline");
+      const arrowPath = data.drawingPaths[i.id];
+      const p = document.createElementNS(ns, arrowPath ? "path" : "polyline");
       p.setAttribute(
-        "points",
-        i.points.map((p: number[]) => p.join(",")).join(" "),
+        arrowPath ? "d" : "points",
+        arrowPath || i.points.map((p: number[]) => p.join(",")).join(" "),
       );
       p.setAttribute("fill", "none");
       p.setAttribute("stroke", i.stroke || "#ddd");
       p.setAttribute("stroke-width", String(i.strokeWidth || 2));
       p.setAttribute("stroke-linecap", "round");
-      if (i.arrow) p.setAttribute("marker-end", "url(#arrow)");
+      if (i.arrow) {
+        const markers = data.drawingMarkers[i.id];
+        if (markers?.markerStart) p.setAttribute("marker-start", markers.markerStart);
+        if (markers?.markerEnd) p.setAttribute("marker-end", markers.markerEnd);
+      }
       s.append(p);
       el.append(s);
     } else {
@@ -218,9 +222,17 @@ export function shareHtml(board: Board) {
   const lines = board.connections.flatMap((c) => {
     const a = board.items.find((i) => i.id === c.from),
       b = board.items.find((i) => i.id === c.to);
-    return a && b ? [connectionPoints(a, b)] : [];
+    if (!a || !b) return [];
+    return [{ ...connectionGeometry(a, b, c.route), ...connectorMarkers(c.arrowheads) }];
   });
-  const data = JSON.stringify({ board, embeds, embedDocuments, lines }).replace(
+  const drawingPaths = Object.fromEntries(board.items.flatMap((i) => {
+    if (!i.arrow || !i.points || i.points.length < 2) return [];
+    const a = i.points[0], b = i.points.at(-1)!;
+    return [[i.id, connectorPath({ x: a[0], y: a[1] }, { x: b[0], y: b[1] }, i.route).d]];
+  }));
+  const drawingMarkers = Object.fromEntries(board.items.filter((i) => i.arrow)
+    .map((i) => [i.id, connectorMarkers(i.arrowheads)]));
+  const data = JSON.stringify({ board, embeds, embedDocuments, lines, drawingPaths, drawingMarkers }).replace(
     /</g,
     "\\u003c",
   );

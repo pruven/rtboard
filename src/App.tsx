@@ -42,6 +42,8 @@ import {
   type Workspace,
   type Item,
   type Point,
+  type ConnectorRoute,
+  type ConnectorArrowheads,
   uid,
   colors,
   strokes,
@@ -54,6 +56,11 @@ import {
   duplicateItems,
   bounds,
   connectionPoints,
+  connectionGeometry,
+  connectorPath,
+  connectorArrowheads,
+  connectorMarkers,
+  snapConnection,
   download,
   shareHtml,
   packageBoard,
@@ -75,6 +82,8 @@ type Gesture = {
   origin: Point;
   points: number[][];
   from?: string;
+  connectionId?: string;
+  endpoint?: "from" | "to";
   selection?: string[];
 };
 type BackupDirectory = {
@@ -127,6 +136,10 @@ export default function App({ initial }: { initial?: Workspace }) {
     [future, setFuture] = useState<Board[]>([]),
     [preview, setPreview] = useState<Gesture | null>(null),
     [connecting, setConnecting] = useState<string | null>(null),
+    [route, setRoute] = useState<ConnectorRoute>("straight"),
+    [arrowheads, setArrowheads] = useState<ConnectorArrowheads>("one"),
+    [selectedConnection, setSelectedConnection] = useState<string | null>(null),
+    [snapTarget, setSnapTarget] = useState<string | null>(null),
     [context, setContext] = useState<Point | null>(null),
     [deleteId, setDeleteId] = useState(""),
     [busy, setBusy] = useState(false),
@@ -160,7 +173,8 @@ export default function App({ initial }: { initial?: Workspace }) {
   }, []);
   const change = useCallback((next: Board, record = true) => {
     if (record) {
-      setHistory((h) => [...h.slice(-79), current.current]);
+      const previous = current.current;
+      setHistory((h) => [...h.slice(-79), previous]);
       setFuture([]);
     }
     current.current = next;
@@ -230,6 +244,8 @@ export default function App({ initial }: { initial?: Workspace }) {
     };
   };
   const chooseTool = (next: Tool) => {
+    setSelectedConnection(null);
+    setSnapTarget(null);
     setTool(next);
     if (next !== tool) setLocked(false);
     if (next !== "select") setSelected([]);
@@ -280,6 +296,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     setZoom(z);
   };
   const openBoard = (id: string) => {
+    chooseTool("select");
     setWorkspace((w) => ({ ...w, active: id }));
     setGallery(false);
     setSelected([]);
@@ -292,6 +309,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     reset();
   };
   const newBoard = () => {
+    chooseTool("select");
     const b = createBoard();
     setWorkspace((w) => ({ boards: [...w.boards, b], active: b.id }));
     setGallery(false);
@@ -595,12 +613,6 @@ export default function App({ initial }: { initial?: Workspace }) {
     }, 600000);
     return () => clearInterval(timer);
   }, [backup]);
-  const hit = (p: Point) =>
-    [...current.current.items]
-      .reverse()
-      .find(
-        (i) => p.x >= i.x && p.x <= i.x + i.w && p.y >= i.y && p.y <= i.y + i.h,
-      );
   const begin = (
     kind: Gesture["kind"],
     e: PE,
@@ -665,11 +677,21 @@ export default function App({ initial }: { initial?: Workspace }) {
       return;
     }
     if (tool === "connect") {
-      begin("connect", e);
+      const source = snapConnection(board.items, point(e.clientX, e.clientY), 18 / zoom);
+      if (connecting && source && source.id !== connecting) {
+        change({ ...board, connections: [...board.connections, { id: uid(), from: connecting, to: source.id, route, arrowheads }] });
+        setConnecting(null);
+        setSnapTarget(null);
+        finishTool();
+      } else {
+        setConnecting(source?.id || null);
+        begin("connect", e, [], source?.id);
+      }
       return;
     }
     if ((e.target as HTMLElement)?.closest?.(".board-item")) return;
     setSelected(e.shiftKey ? selected : []);
+    setSelectedConnection(null);
     begin("marquee", e);
   };
   const itemDown = (e: PE, i: Item) => {
@@ -692,10 +714,11 @@ export default function App({ initial }: { initial?: Workspace }) {
           ...board,
           connections: [
             ...board.connections,
-            { id: uid(), from: connecting, to: i.id },
+            { id: uid(), from: connecting, to: i.id, route, arrowheads },
           ],
         });
         setConnecting(null);
+        setSnapTarget(null);
         finishTool();
         return;
       }
@@ -704,6 +727,7 @@ export default function App({ initial }: { initial?: Workspace }) {
       return;
     }
     if (tool !== "select") return;
+    setSelectedConnection(null);
     e.stopPropagation();
     setEditing(null);
     setContext(null);
@@ -719,6 +743,10 @@ export default function App({ initial }: { initial?: Workspace }) {
   };
   const move = (e: PE) => {
     lastPointer.current = point(e.clientX, e.clientY);
+    if (tool === "connect" || gesture.current?.kind === "connect") {
+      setSnapTarget(snapConnection(board.items, lastPointer.current, 18 / zoom,
+        gesture.current?.from || connecting || undefined)?.id || null);
+    }
     if (pointers.current.has(e.pointerId))
       pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pinch.current && pointers.current.size === 2) {
@@ -858,14 +886,20 @@ export default function App({ initial }: { initial?: Workspace }) {
         },
       ]);
     }
-    if (g.kind === "connect" && moved) {
-      const to = hit(g.last);
+    if (g.kind === "connect" && (moved || g.connectionId)) {
+      const to = snapConnection(board.items, point(e.clientX, e.clientY), 18 / zoom, g.from);
+      if (g.connectionId) {
+        if (to) change({ ...board, connections: board.connections.map((c) =>
+          c.id === g.connectionId ? { ...c, [g.endpoint!]: to.id } : c) });
+        setSnapTarget(null);
+        return;
+      }
       if (g.from && to && to.id !== g.from) {
         change({
           ...board,
           connections: [
             ...board.connections,
-            { id: uid(), from: g.from, to: to.id },
+            { id: uid(), from: g.from, to: to.id, route, arrowheads },
           ],
         });
       } else {
@@ -883,6 +917,8 @@ export default function App({ initial }: { initial?: Workspace }) {
             stroke,
             strokeWidth: weight,
             arrow: true,
+            route,
+            arrowheads,
             points: [
               [g.start.x - x, g.start.y - y],
               [g.last.x - x, g.last.y - y],
@@ -891,6 +927,7 @@ export default function App({ initial }: { initial?: Workspace }) {
         ]);
       }
       setConnecting(null);
+      setSnapTarget(null);
       finishTool();
     }
   };
@@ -920,6 +957,8 @@ export default function App({ initial }: { initial?: Workspace }) {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        gesture.current = null;
+        setPreview(null);
         setModal(null);
         setMenu(false);
         setSearchOpen(false);
@@ -971,6 +1010,10 @@ export default function App({ initial }: { initial?: Workspace }) {
         fit();
       } else if (mod && e.key === "c" && selected.length) {
         clipboard.current = board.items.filter((i) => selected.includes(i.id));
+      } else if (["Delete", "Backspace"].includes(e.key) && selectedConnection) {
+        e.preventDefault();
+        change({ ...board, connections: board.connections.filter((c) => c.id !== selectedConnection) });
+        setSelectedConnection(null);
       } else if (["Delete", "Backspace"].includes(e.key) && selected.length) {
         e.preventDefault();
         remove();
@@ -1201,6 +1244,28 @@ export default function App({ initial }: { initial?: Workspace }) {
     if (search && searchOpen) jump(0);
   }, [search]);
   const active = board.items.find((i) => i.id === selected[0]);
+  const activeConnection = board.connections.find((c) => c.id === selectedConnection);
+  const currentRoute = activeConnection ? activeConnection.route || "straight"
+    : active?.arrow ? active.route || "straight" : route;
+  const currentArrowheads = connectorArrowheads(activeConnection ? activeConnection.arrowheads
+    : active?.arrow ? active.arrowheads : arrowheads);
+  const previewArrowheads = preview?.connectionId
+    ? board.connections.find((c) => c.id === preview.connectionId)?.arrowheads : arrowheads;
+  const previewRoute = preview?.connectionId
+    ? board.connections.find((c) => c.id === preview.connectionId)?.route || "straight"
+    : route;
+  const previewSource = board.items.find((i) => i.id === preview?.from);
+  const previewTarget = board.items.find((i) => i.id === snapTarget);
+  const previewOther: Item | undefined = preview && (previewTarget || {
+    id: "preview", kind: "shape", text: "", ...preview.last, w: 1, h: 1,
+  }) || undefined;
+  const previewPath = previewSource && previewOther
+    ? connectionGeometry(
+      preview?.endpoint === "from" ? previewOther : previewSource,
+      preview?.endpoint === "from" ? previewSource : previewOther,
+      previewRoute,
+    ).d
+    : connectorPath(preview?.start || { x: 0, y: 0 }, preview?.last || { x: 0, y: 0 }, previewRoute).d;
   const textStyle = (i: Item): CSSProperties => ({
     fontSize: i.fontSize || 20,
     fontWeight: i.bold ? 700 : 400,
@@ -1469,25 +1534,26 @@ export default function App({ initial }: { initial?: Workspace }) {
                 const a = board.items.find((i) => i.id === c.from),
                   b = board.items.find((i) => i.id === c.to);
                 if (!a || !b) return null;
-                const p = connectionPoints(a, b);
+                const p = connectionGeometry(a, b, c.route);
                 return (
-                  <line
+                  <g
                     key={c.id}
-                    x1={p.a.x}
-                    y1={p.a.y}
-                    x2={p.b.x}
-                    y2={p.b.y}
-                    markerEnd="url(#arrow)"
-                    className="connector-line"
-                    onDoubleClick={() =>
-                      change({
-                        ...board,
-                        connections: board.connections.filter(
-                          (x) => x.id !== c.id,
-                        ),
-                      })
-                    }
-                  />
+                    onPointerDown={(e) => {
+                      if (tool !== "select" || space) return;
+                      e.stopPropagation();
+                      setSelected([]);
+                      setSelectedConnection(c.id);
+                    }}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      change({ ...board, connections: board.connections.filter((x) => x.id !== c.id) });
+                      setSelectedConnection(null);
+                    }}
+                  >
+                    <path data-connection-id={c.id} d={p.d} {...connectorMarkers(c.arrowheads)} fill="none"
+                      className={`connector-line ${selectedConnection === c.id ? "selected" : ""}`} />
+                    <path d={p.d} className="connector-hit" />
+                  </g>
                 );
               })}
             </svg>
@@ -1495,7 +1561,7 @@ export default function App({ initial }: { initial?: Workspace }) {
               <div
                 key={i.id}
                 data-item-id={i.id}
-                className={`board-item item-${i.kind} ${selected.includes(i.id) ? "selected" : ""} ${connecting === i.id ? "connecting" : ""} ${search && !i.text.toLowerCase().includes(search.toLowerCase()) ? "dimmed" : ""}`}
+                className={`board-item item-${i.kind} ${selected.includes(i.id) ? "selected" : ""} ${connecting === i.id ? "connecting" : ""} ${snapTarget === i.id ? "snap-target" : ""} ${search && !i.text.toLowerCase().includes(search.toLowerCase()) ? "dimmed" : ""}`}
                 style={{
                   left: i.x,
                   top: i.y,
@@ -1573,15 +1639,23 @@ export default function App({ initial }: { initial?: Workspace }) {
                   ))}
                 {i.kind === "drawing" && (
                   <svg viewBox={`0 0 ${i.w} ${i.h}`} preserveAspectRatio="none">
-                    <polyline
-                      points={i.points?.map((p) => p.join(",")).join(" ")}
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={i.strokeWidth || 2}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      markerEnd={i.arrow ? "url(#arrow)" : undefined}
-                    />
+                    {i.arrow && i.points && i.points.length > 1 ? (
+                      <path
+                        d={connectorPath(
+                          { x: i.points[0][0], y: i.points[0][1] },
+                          { x: i.points.at(-1)![0], y: i.points.at(-1)![1] },
+                          i.route,
+                        ).d}
+                        fill="none" stroke="currentColor" strokeWidth={i.strokeWidth || 2}
+                        strokeLinecap="round" strokeLinejoin="round" {...connectorMarkers(i.arrowheads)}
+                      />
+                    ) : (
+                      <polyline
+                        points={i.points?.map((p) => p.join(",")).join(" ")}
+                        fill="none" stroke="currentColor" strokeWidth={i.strokeWidth || 2}
+                        strokeLinecap="round" strokeLinejoin="round"
+                      />
+                    )}
                   </svg>
                 )}
                 {i.kind === "link" && (
@@ -1661,26 +1735,37 @@ export default function App({ initial }: { initial?: Workspace }) {
                 }}
               />
             )}
+            {activeConnection && !preview && (() => {
+              const a = board.items.find((i) => i.id === activeConnection.from);
+              const b = board.items.find((i) => i.id === activeConnection.to);
+              if (!a || !b) return null;
+              const ends = connectionPoints(a, b, activeConnection.route);
+              return <svg className="connections connector-handles">
+                {(["from", "to"] as const).map((endpoint) => {
+                  const p = endpoint === "from" ? ends.a : ends.b;
+                  return <circle key={endpoint} cx={p.x} cy={p.y} r={6 / zoom}
+                    className="connector-endpoint" aria-label={`Reconnect ${endpoint === "from" ? "start" : "end"}`}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      const fixed = endpoint === "from" ? activeConnection.to : activeConnection.from;
+                      begin("connect", e, [], fixed);
+                      gesture.current!.connectionId = activeConnection.id;
+                      gesture.current!.endpoint = endpoint;
+                      setPreview({ ...gesture.current! });
+                    }} />;
+                })}
+              </svg>;
+            })()}
             {preview && ["draw", "connect"].includes(preview.kind) && (
               <svg className="connections">
-                <polyline
-                  points={(preview.kind === "draw"
-                    ? preview.points
-                    : [
-                        [preview.start.x, preview.start.y],
-                        [preview.last.x, preview.last.y],
-                      ]
-                  )
-                    .map((p) => p.join(","))
-                    .join(" ")}
-                  fill="none"
-                  stroke={stroke}
-                  strokeWidth={weight}
-                  strokeLinecap="round"
-                  markerEnd={
-                    preview.kind === "connect" ? "url(#arrow)" : undefined
-                  }
-                />
+                {preview.kind === "connect" ? (
+                  <path d={previewPath}
+                    fill="none" stroke="var(--selection)" strokeWidth={weight}
+                    strokeLinecap="round" strokeLinejoin="round" {...connectorMarkers(previewArrowheads)} />
+                ) : (
+                  <polyline points={preview.points.map((p) => p.join(",")).join(" ")}
+                    fill="none" stroke={stroke} strokeWidth={weight} strokeLinecap="round" />
+                )}
               </svg>
             )}
           </div>
@@ -1695,12 +1780,57 @@ export default function App({ initial }: { initial?: Workspace }) {
             tool === "draw" ||
             tool === "connect" ||
             tool === "text" ||
-            selected.length > 0) && (
+            selected.length > 0 || activeConnection) && (
             <div
               className="properties"
               data-ui
               onPointerDown={(e) => e.stopPropagation()}
             >
+              {(tool === "connect" || activeConnection || active?.arrow) && (
+                <div className="property-row connector-routes" role="group" aria-label="Connector route">
+                  {(["straight", "curved", "elbow"] as const).map((value) => (
+                    <button key={value} aria-label={`${value[0].toUpperCase()}${value.slice(1)}`}
+                      aria-pressed={currentRoute === value}
+                      className={currentRoute === value ? "active" : ""}
+                      onClick={() => {
+                        setRoute(value);
+                        if (activeConnection) change({ ...board, connections: board.connections.map((c) =>
+                          c.id === activeConnection.id ? { ...c, route: value } : c) });
+                        else if (active?.arrow) update({ route: value });
+                      }}>
+                      <svg viewBox="0 0 24 18" width="24" height="18" aria-hidden="true">
+                        <path d={connectorPath({ x: 2, y: 3 }, { x: 22, y: 15 }, value).d}
+                          fill="none" stroke="currentColor" strokeWidth="1.5" />
+                      </svg>
+                      {value[0].toUpperCase()}{value.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {(tool === "connect" || activeConnection || active?.arrow) && (
+                <div className="property-row connector-routes" role="group" aria-label="Connector arrowheads">
+                  {([
+                    { value: "one", label: "One end" },
+                    { value: "both", label: "Both ends" },
+                    { value: "none", label: "None" },
+                  ] as const).map(({ value, label }) => (
+                    <button key={value} aria-label={label} aria-pressed={currentArrowheads === value}
+                      className={currentArrowheads === value ? "active" : ""}
+                      onClick={() => {
+                        setArrowheads(value);
+                        if (activeConnection) change({ ...board, connections: board.connections.map((c) =>
+                          c.id === activeConnection.id ? { ...c, arrowheads: value } : c) });
+                        else if (active?.arrow) update({ arrowheads: value });
+                      }}>
+                      <svg viewBox="0 0 24 18" width="24" height="18" aria-hidden="true">
+                        <path d={`M 3 9 H 21${value !== "none" ? " M 17 5 L 21 9 L 17 13" : ""}${value === "both" ? " M 7 5 L 3 9 L 7 13" : ""}`}
+                          fill="none" stroke="currentColor" strokeWidth="1.5" />
+                      </svg>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
               {tool === "shape" && (
                 <>
                   <div className="property-row">

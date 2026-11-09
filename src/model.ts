@@ -3,6 +3,19 @@ import { instagramPermalink } from "./instagram";
 export type Kind =
   "note" | "text" | "image" | "link" | "drawing" | "shape" | "video" | "audio";
 export type Point = { x: number; y: number };
+export type ConnectorRoute = "straight" | "curved" | "elbow";
+export type ConnectorArrowheads = "one" | "both" | "none";
+export const connectorArrowheads = (value: unknown): ConnectorArrowheads =>
+  value === "both" || value === "none" ? value : "one";
+export function connectorMarkers(value: unknown) {
+  const mode = connectorArrowheads(value);
+  return {
+    markerStart: mode === "both" ? "url(#arrow)" : undefined,
+    markerEnd: mode !== "none" ? "url(#arrow)" : undefined,
+  };
+}
+export const connectorRoute = (value: unknown): ConnectorRoute =>
+  value === "curved" || value === "elbow" ? value : "straight";
 export type Item = {
   id: string;
   kind: Kind;
@@ -22,8 +35,10 @@ export type Item = {
   italic?: boolean;
   align?: "left" | "center" | "right";
   arrow?: boolean;
+  route?: ConnectorRoute;
+  arrowheads?: ConnectorArrowheads;
 };
-export type Connection = { id: string; from: string; to: string };
+export type Connection = { id: string; from: string; to: string; route?: ConnectorRoute; arrowheads?: ConnectorArrowheads };
 export type Board = {
   id: string;
   name: string;
@@ -216,13 +231,15 @@ export function validateBoard(input: unknown): Board {
         ? i.align
         : "left",
       arrow: !!i.arrow,
+      route: connectorRoute(i.route),
+      arrowheads: connectorArrowheads(i.arrowheads),
     };
   });
   const connections = (Array.isArray(b.connections) ? b.connections : [])
     .filter(
       (c) => c && typeof c.id === "string" && ids.has(c.from) && ids.has(c.to),
     )
-    .map((c) => ({ id: c.id, from: c.from, to: c.to }));
+    .map((c) => ({ id: c.id, from: c.from, to: c.to, route: connectorRoute(c.route), arrowheads: connectorArrowheads(c.arrowheads) }));
   return {
     id: uid(),
     name: b.name.slice(0, 120),
@@ -265,6 +282,7 @@ export function duplicateItems(
         ...board.connections
           .filter((c) => map.has(c.from) && map.has(c.to))
           .map((c) => ({
+            ...c,
             id: uid(),
             from: map.get(c.from)!,
             to: map.get(c.to)!,
@@ -285,17 +303,63 @@ export function bounds(items: Item[]) {
     h: Math.max(...items.map((i) => i.y + i.h)) - y,
   };
 }
-export function connectionPoints(a: Item, b: Item) {
+export function connectionPoints(
+  a: Pick<Item, "x" | "y" | "w" | "h" | "shape">,
+  b: Pick<Item, "x" | "y" | "w" | "h" | "shape">,
+  route: ConnectorRoute = "straight",
+) {
   const ax = a.x + a.w / 2,
     ay = a.y + a.h / 2,
     bx = b.x + b.w / 2,
     by = b.y + b.h / 2;
-  const edge = (i: Item, dx: number, dy: number) => {
+  const edge = (i: typeof a, dx: number, dy: number) => {
     const f =
-      1 / Math.max(Math.abs(dx) / (i.w / 2), Math.abs(dy) / (i.h / 2), 0.00001);
+      1 / Math.max(i.shape === "ellipse"
+        ? Math.hypot(dx / (i.w / 2), dy / (i.h / 2))
+        : Math.max(Math.abs(dx) / (i.w / 2), Math.abs(dy) / (i.h / 2)), 0.00001);
     return { x: i.x + i.w / 2 + dx * f, y: i.y + i.h / 2 + dy * f };
   };
-  return { a: edge(a, bx - ax, by - ay), b: edge(b, ax - bx, ay - by) };
+  let dx = bx - ax, dy = by - ay;
+  if (route !== "straight") {
+    if (Math.abs(dx) >= Math.abs(dy)) { dx = Math.sign(dx) || 1; dy = 0; }
+    else { dx = 0; dy = Math.sign(dy) || 1; }
+  }
+  if (!dx && !dy) dx = 1;
+  return { a: edge(a, dx, dy), b: edge(b, -dx, -dy) };
+}
+
+// Shared by the canvas, live preview, and both export formats.
+export function connectorPath(a: Point, b: Point, route: ConnectorRoute = "straight", horizontal = Math.abs(b.x - a.x) >= Math.abs(b.y - a.y)) {
+  const start = `M ${a.x} ${a.y}`;
+  if (route === "straight") return { d: `${start} L ${b.x} ${b.y}`, tail: a, head: b };
+  const c1 = horizontal ? { x: (a.x + b.x) / 2, y: a.y } : { x: a.x, y: (a.y + b.y) / 2 };
+  const c2 = horizontal ? { x: c1.x, y: b.y } : { x: b.x, y: c1.y };
+  return {
+    d: route === "curved"
+      ? `${start} C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${b.x} ${b.y}`
+      : `${start} L ${c1.x} ${c1.y} L ${c2.x} ${c2.y} L ${b.x} ${b.y}`,
+    tail: c2.x === b.x && c2.y === b.y ? a : c2,
+    head: c1.x === a.x && c1.y === a.y ? b : c1,
+  };
+}
+
+export function connectionGeometry(a: Item, b: Item, route: ConnectorRoute = "straight") {
+  const ends = connectionPoints(a, b, route);
+  const horizontal = Math.abs(b.x + b.w / 2 - a.x - a.w / 2) >=
+    Math.abs(b.y + b.h / 2 - a.y - a.h / 2);
+  return { ...ends, ...connectorPath(ends.a, ends.b, route, horizontal) };
+}
+
+export function snapConnection(items: Item[], p: Point, radius: number, exclude?: string) {
+  const candidates = [...items].reverse().filter((i) => i.id !== exclude);
+  let closest: Item | undefined, distance = Infinity;
+  for (const i of candidates) {
+    const dx = Math.max(i.x - p.x, 0, p.x - i.x - i.w);
+    const dy = Math.max(i.y - p.y, 0, p.y - i.y - i.h);
+    const d = Math.hypot(dx, dy);
+    if (d <= radius && d < distance) { closest = i; distance = d; }
+  }
+  return closest;
 }
 export function download(
   name: string,
