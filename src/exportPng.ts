@@ -1,3 +1,4 @@
+import { canvasFont, shapePaths, sketchPath, penPath } from "./sketch";
 import {
   type Board,
   type Item,
@@ -11,6 +12,7 @@ import {
   downloadBlob,
 } from "./model";
 export async function exportPng(board: Board, dark: boolean) {
+  await document.fonts.load(`20px Kalam`);
   const box = bounds(board.items),
     scale = Math.min(
       2,
@@ -31,8 +33,8 @@ export async function exportPng(board: Board, dark: boolean) {
   ctx.translate(40 - box.x, 40 - box.y);
   const ink = dark ? "#fafafa" : "#0a0a0a";
   const arrow = (x1: number, y1: number, x2: number, y2: number, route?: ConnectorRoute,
-    path = connectorPath({ x: x1, y: y1 }, { x: x2, y: y2 }, route), arrowheads?: ConnectorArrowheads) => {
-    ctx.stroke(new Path2D(path.d));
+    path = connectorPath({ x: x1, y: y1 }, { x: x2, y: y2 }, route), arrowheads?: ConnectorArrowheads, id = "arrow") => {
+    ctx.stroke(new Path2D(sketchPath(path.d, id, ctx.lineWidth)));
     const cap = (x: number, y: number, angle: number) => {
       ctx.beginPath();
       ctx.moveTo(x, y);
@@ -52,12 +54,12 @@ export async function exportPng(board: Board, dark: boolean) {
       b = board.items.find((i) => i.id === c.to);
     if (a && b) {
       const p = connectionGeometry(a, b, c.route);
-      arrow(p.a.x, p.a.y, p.b.x, p.b.y, c.route, p, c.arrowheads);
+      arrow(p.a.x, p.a.y, p.b.x, p.b.y, c.route, p, c.arrowheads, c.id);
     }
   }
   const text = (i: Item, padding: number, color: string) => {
     const size = i.fontSize || 20;
-    ctx.font = `${i.italic ? "italic " : ""}${i.bold ? "700" : "400"} ${size}px system-ui`;
+    ctx.font = `${i.italic ? "italic " : ""}${i.bold ? "700" : "400"} ${size}px ${canvasFont}`;
     ctx.fillStyle = color;
     ctx.textBaseline = "top";
     ctx.textAlign = i.align || "left";
@@ -85,10 +87,30 @@ export async function exportPng(board: Board, dark: boolean) {
   };
   for (const i of board.items) {
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(i.x, i.y, i.w, i.h);
-    ctx.clip();
-    if (i.kind === "note" || i.kind === "shape") {
+    if (!["shape", "drawing"].includes(i.kind)) {
+      ctx.beginPath();
+      ctx.rect(i.x, i.y, i.w, i.h);
+      ctx.clip();
+    }
+    if (i.kind === "shape") {
+      ctx.save();
+      ctx.translate(i.x, i.y);
+      for (const p of shapePaths(i)) {
+        const path = new Path2D(p.d);
+        if (p.fill && p.fill !== "none") { ctx.fillStyle = p.fill; ctx.fill(path); }
+        ctx.strokeStyle = p.stroke;
+        ctx.lineWidth = p.strokeWidth;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.stroke(path);
+      }
+      ctx.restore();
+      // Keep sketch edges free to overshoot, but contain the shape's label.
+      ctx.beginPath();
+      ctx.rect(i.x, i.y, i.w, i.h);
+      ctx.clip();
+      text(i, 18, ink);
+    } else if (i.kind === "note") {
       ctx.beginPath();
       if (i.shape === "ellipse")
         ctx.ellipse(
@@ -107,7 +129,7 @@ export async function exportPng(board: Board, dark: boolean) {
       ctx.lineWidth = i.strokeWidth || 2;
       ctx.stroke();
       text(i, 20, i.kind === "note" ? "#222" : ink);
-    } else if (i.kind === "text") text(i, 4, ink);
+    } else if (i.kind === "text") text(i, 4, i.stroke || ink);
     else if (i.kind === "image") {
       const image = await new Promise<HTMLImageElement>((resolve, reject) => {
         const img = new Image();
@@ -133,15 +155,11 @@ export async function exportPng(board: Board, dark: boolean) {
           i.route,
           drawingConnectorPath(i, board.items),
           i.arrowheads,
+          i.id,
         );
       else {
-        ctx.beginPath();
-        p.forEach((p, n) =>
-          n
-            ? ctx.lineTo(i.x + p[0], i.y + p[1])
-            : ctx.moveTo(i.x + p[0], i.y + p[1]),
-        );
-        ctx.stroke();
+        ctx.translate(i.x, i.y);
+        ctx.stroke(new Path2D(penPath(p)));
       }
     } else {
       ctx.fillStyle = dark ? "#1f1f1f" : "#eee";

@@ -270,6 +270,7 @@ export function parseBoardFile(text: string): Board {
 export function duplicateItems(
   board: Board,
   ids: string[],
+  offset = 24,
 ): { board: Board; ids: string[] } {
   const map = new Map<string, string>();
   const copies = board.items
@@ -277,7 +278,7 @@ export function duplicateItems(
     .map((i) => {
       const id = uid();
       map.set(i.id, id);
-      return { ...i, id, x: i.x + 24, y: i.y + 24 };
+      return { ...i, id, x: i.x + offset, y: i.y + offset };
     });
   return {
     board: {

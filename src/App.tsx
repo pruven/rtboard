@@ -72,6 +72,7 @@ import {
   encodeShare,
   decodeShare,
 } from "./model";
+import { canvasFont, shapePaths, sketchPath, penPath } from "./sketch";
 import { readLegacy, saveWorkspace } from "./storage";
 import { exportPng } from "./exportPng";
 import { readTheme, saveTheme } from "./theme";
@@ -92,6 +93,9 @@ type Gesture = {
   fixedPoint?: Point;
   endpoint?: "from" | "to";
   selection?: string[];
+  undoBefore?: Board;
+  duplicate?: boolean;
+  axis?: "x" | "y";
 };
 type BackupDirectory = {
   getFileHandle: (
@@ -655,6 +659,15 @@ export default function App({ initial }: { initial?: Workspace }) {
     canvas.current?.setPointerCapture?.(e.pointerId);
     setPreview(g);
   };
+  const cancelGesture = () => {
+    const g = gesture.current;
+    if (g && ["drag", "resize"].includes(g.kind)) {
+      change(g.undoBefore || g.before, false);
+      if (g.undoBefore) setSelected([]);
+    }
+    gesture.current = null;
+    setPreview(null);
+  };
   const down = (e: PE) => {
     const pan = tool === "hand" || space || e.button === 1;
     if (
@@ -673,8 +686,7 @@ export default function App({ initial }: { initial?: Workspace }) {
         offset,
         world: point(mid.x, mid.y),
       };
-      gesture.current = null;
-      setPreview(null);
+      cancelGesture();
       return;
     }
     setMenu(false);
@@ -769,6 +781,7 @@ export default function App({ initial }: { initial?: Workspace }) {
         : [i.id];
     setSelected(ids);
     begin("drag", e, ids);
+    gesture.current!.duplicate = e.altKey;
   };
   const move = (e: PE) => {
     lastPointer.current = point(e.clientX, e.clientY);
@@ -805,10 +818,29 @@ export default function App({ initial }: { initial?: Workspace }) {
       g.origin = { x: e.clientX, y: e.clientY };
       return;
     }
+    if (g.kind === "shape" && e.shiftKey) {
+      const size = Math.max(Math.abs(p.x - g.start.x), Math.abs(p.y - g.start.y));
+      p.x = g.start.x + (p.x < g.start.x ? -size : size);
+      p.y = g.start.y + (p.y < g.start.y ? -size : size);
+    }
     g.last = p;
     if (g.kind === "drag") {
-      const dx = (e.clientX - g.origin.x) / zoom,
+      let dx = (e.clientX - g.origin.x) / zoom,
         dy = (e.clientY - g.origin.y) / zoom;
+      const pastThreshold = Math.hypot(dx, dy) > 3 / zoom;
+      if (g.duplicate && !g.undoBefore) {
+        if (!pastThreshold) return;
+        const result = duplicateItems(g.before, g.ids, 0);
+        g.undoBefore = g.before;
+        g.before = result.board;
+        g.ids = result.ids;
+        setSelected(result.ids);
+      }
+      if (e.shiftKey) {
+        if (!g.axis && pastThreshold) g.axis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+        if (g.axis === "x") dy = 0;
+        else if (g.axis === "y") dx = 0;
+      } else g.axis = undefined;
       change(
         {
           ...g.before,
@@ -874,8 +906,8 @@ export default function App({ initial }: { initial?: Workspace }) {
     const dx = g.last.x - g.start.x,
       dy = g.last.y - g.start.y,
       moved = Math.hypot(dx, dy) > 3 / zoom;
-    if ((g.kind === "drag" || g.kind === "resize") && moved) {
-      setHistory((h) => [...h.slice(-79), g.before]);
+    if ((g.kind === "drag" || g.kind === "resize") && (moved || g.undoBefore)) {
+      setHistory((h) => [...h.slice(-79), g.undoBefore || g.before]);
       setFuture([]);
     }
     if (g.kind === "shape") {
@@ -996,7 +1028,7 @@ export default function App({ initial }: { initial?: Workspace }) {
           e.clientX - r.left,
           e.clientY - r.top,
         );
-      } else setOffset((o) => ({ x: o.x - e.deltaX, y: o.y - e.deltaY }));
+      } else setOffset((o) => ({ x: o.x - (e.shiftKey ? e.deltaY : e.deltaX), y: o.y - (e.shiftKey ? e.deltaX : e.deltaY) }));
     };
     el.addEventListener("wheel", wheel, { passive: false });
     return () => el.removeEventListener("wheel", wheel);
@@ -1027,8 +1059,7 @@ export default function App({ initial }: { initial?: Workspace }) {
           closeReconnect();
           return;
         }
-        gesture.current = null;
-        setPreview(null);
+        cancelGesture();
         setModal(null);
         setMenu(false);
         setSearchOpen(false);
@@ -1119,15 +1150,32 @@ export default function App({ initial }: { initial?: Workspace }) {
           ),
         });
       } else if (!mod) {
+        if (!e.altKey && !e.isComposing && ["t", "8"].includes(e.key.toLowerCase())) {
+          e.preventDefault();
+          if (!e.repeat) {
+            chooseTool("select");
+            addText(lastPointer.current || center());
+          }
+          return;
+        }
         const tools: Record<string, Tool> = {
           v: "select",
           h: "hand",
-          t: "text",
           p: "draw",
+          x: "draw",
+          a: "connect",
+          "1": "select",
+          "2": "shape",
+          "5": "connect",
+          "7": "draw",
           c: "connect",
           s: "shape",
         };
         if (tools[e.key.toLowerCase()]) chooseTool(tools[e.key.toLowerCase()]);
+        if (["r", "o", "2", "4"].includes(e.key.toLowerCase())) {
+          setShape(["o", "4"].includes(e.key.toLowerCase()) ? "ellipse" : "rectangle");
+          chooseTool("shape");
+        }
         if (e.key === "?") setModal("help");
         if (e.key === "n") {
           setShape("note");
@@ -1144,8 +1192,7 @@ export default function App({ initial }: { initial?: Workspace }) {
       setSpace(false);
       pointers.current.clear();
       pinch.current = null;
-      gesture.current = null;
-      setPreview(null);
+      cancelGesture();
     };
     window.addEventListener("keydown", key);
     window.addEventListener("keyup", release);
@@ -1350,6 +1397,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     ).d
     : connectorPath(preview?.start || { x: 0, y: 0 }, preview?.last || { x: 0, y: 0 }, previewRoute).d;
   const textStyle = (i: Item): CSSProperties => ({
+    fontFamily: ["text", "note", "shape"].includes(i.kind) ? canvasFont : undefined,
     fontSize: i.fontSize || 20,
     fontWeight: i.bold ? 700 : 400,
     fontStyle: i.italic ? "italic" : "normal",
@@ -1570,15 +1618,14 @@ export default function App({ initial }: { initial?: Workspace }) {
           onPointerCancel={(e) => {
             pointers.current.delete(e.pointerId);
             pinch.current = null;
-            gesture.current = null;
-            setPreview(null);
+            cancelGesture();
           }}
           onDoubleClick={(e) => {
             if (
-              tool === "select" &&
+              tool === "select" && !space &&
               !(e.target as HTMLElement)?.closest?.(".board-item,[data-ui]")
             )
-              addText(point(e.clientX, e.clientY));
+              addNote(point(e.clientX, e.clientY));
           }}
           onContextMenu={(e) => {
             if ((e.target as HTMLElement)?.closest?.("textarea,input,iframe"))
@@ -1624,7 +1671,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                   markerHeight="7"
                   orient="auto-start-reverse"
                 >
-                  <path d="M 0 0 L 10 5 L 0 10" fill="context-stroke" />
+                  <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="context-stroke" strokeOpacity="1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 </marker>
               </defs>
               {board.connections.map((c) => {
@@ -1635,6 +1682,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                 return (
                   <g
                     key={c.id}
+                    style={{ color: selectedConnection === c.id ? "var(--selection)" : undefined }}
                     onPointerDown={(e) => {
                       if (tool !== "select" || space) return;
                       e.stopPropagation();
@@ -1647,8 +1695,9 @@ export default function App({ initial }: { initial?: Workspace }) {
                       setSelectedConnection(null);
                     }}
                   >
-                    <path data-connection-id={c.id} d={p.d} {...connectorMarkers(c.arrowheads)} fill="none"
+                    <path data-connection-id={c.id} data-geometry={p.d} d={sketchPath(p.d, c.id)} fill="none"
                       className={`connector-line ${selectedConnection === c.id ? "selected" : ""}`} />
+                    <path d={p.d} fill="none" stroke="currentColor" strokeOpacity="0" strokeWidth="2" {...connectorMarkers(c.arrowheads)} />
                     <path d={p.d} className="connector-hit" />
                   </g>
                 );
@@ -1680,8 +1729,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                   ...textStyle(i),
                   ...(i.kind === "note" || i.kind === "shape"
                     ? {
-                        background: i.color || "transparent",
-                        border: `${i.strokeWidth || 2}px solid ${i.stroke || "transparent"}`,
+                        background: i.kind === "note" ? i.color : "transparent",
                         borderRadius: i.shape === "ellipse" ? "50%" : 4,
                       }
                     : {}),
@@ -1706,6 +1754,11 @@ export default function App({ initial }: { initial?: Workspace }) {
                   if (!selected.includes(i.id)) setSelected([i.id]);
                 }}
               >
+                {i.kind === "shape" && (
+                  <svg className="sketch-shape" viewBox={`0 0 ${i.w} ${i.h}`} preserveAspectRatio="none" aria-hidden="true">
+                    {shapePaths(i).map((p, n) => <path key={n} d={p.d} fill={p.fill || "none"} stroke={p.stroke} strokeWidth={p.strokeWidth} strokeLinecap="round" strokeLinejoin="round" />)}
+                  </svg>
+                )}
                 {i.kind === "image" && (
                   <img
                     src={i.src}
@@ -1755,14 +1808,19 @@ export default function App({ initial }: { initial?: Workspace }) {
                 {i.kind === "drawing" && (
                   <svg viewBox={`0 0 ${i.w} ${i.h}`} preserveAspectRatio="none">
                     {i.arrow && i.points && i.points.length > 1 ? (
+                      <>
                       <path
-                        d={drawingConnectorPath(i, board.items, true).d}
+                        data-geometry={drawingConnectorPath(i, board.items, true).d}
+                        d={sketchPath(drawingConnectorPath(i, board.items, true).d, i.id, i.strokeWidth)}
                         fill="none" stroke="currentColor" strokeWidth={i.strokeWidth || 2}
-                        strokeLinecap="round" strokeLinejoin="round" {...connectorMarkers(i.arrowheads)}
+                        strokeLinecap="round" strokeLinejoin="round"
                       />
+                      <path d={drawingConnectorPath(i, board.items, true).d} fill="none" stroke="currentColor" strokeOpacity="0"
+                        strokeWidth={i.strokeWidth || 2} {...connectorMarkers(i.arrowheads)} />
+                      </>
                     ) : (
-                      <polyline
-                        points={i.points?.map((p) => p.join(",")).join(" ")}
+                      <path
+                        d={penPath(i.points)}
                         fill="none" stroke="currentColor" strokeWidth={i.strokeWidth || 2}
                         strokeLinecap="round" strokeLinejoin="round"
                       />
@@ -1852,15 +1910,23 @@ export default function App({ initial }: { initial?: Workspace }) {
                   ...(preview.kind === "shape"
                     ? {
                         background:
-                          shape === "note" && fill === "transparent"
-                            ? colors[0]
-                            : fill,
-                        border: `${weight}px solid ${stroke}`,
+                          shape === "note"
+                            ? (fill === "transparent" ? colors[0] : fill)
+                            : "transparent",
                         borderRadius: shape === "ellipse" ? "50%" : 4,
                       }
                     : {}),
                 }}
-              />
+              >
+                {preview.kind === "shape" && shape !== "note" && (
+                  <svg className="sketch-shape" aria-hidden="true">
+                    {shapePaths({ id: "preview", kind: "shape", text: "", x: 0, y: 0,
+                      w: Math.abs(preview.last.x - preview.start.x), h: Math.abs(preview.last.y - preview.start.y),
+                      shape, color: fill, stroke, strokeWidth: weight,
+                    }).map((p, n) => <path key={n} d={p.d} fill={p.fill || "none"} stroke={p.stroke} strokeWidth={p.strokeWidth} />)}
+                  </svg>
+                )}
+              </div>
             )}
             {(activeConnection || active?.arrow) && !preview && (() => {
               const a = board.items.find((i) => i.id === activeConnection?.from);
@@ -1905,7 +1971,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                     fill="none" stroke="var(--selection)" strokeWidth={weight}
                     strokeLinecap="round" strokeLinejoin="round" {...connectorMarkers(previewArrowheads)} />
                 ) : (
-                  <polyline points={preview.points.map((p) => p.join(",")).join(" ")}
+                  <path d={penPath(preview.points)}
                     fill="none" stroke={stroke} strokeWidth={weight} strokeLinecap="round" />
                 )}
               </svg>
@@ -2512,7 +2578,11 @@ export default function App({ initial }: { initial?: Workspace }) {
                     ["Select", "V"],
                     ["Hand", "H"],
                     ["Text", "T"],
-                    ["Draw", "P"],
+                    ["Draw", "P / X"],
+                    ["Rectangle", "R / 2"],
+                    ["Ellipse", "O / 4"],
+                    ["Constrain shape / movement", "Shift + drag"],
+                    ["Duplicate while dragging", "Alt + drag"],
                     ["Connector", "C"],
                     ["Shapes", "S"],
                     ["Sticky note", "N"],
@@ -2538,6 +2608,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                   ))}
                 </div>
                 <p>
+                  Double-click empty canvas to add a sticky note.
                   Double-click a tool to keep it active. Double-click text to
                   edit. Drag on empty canvas to select multiple items.
                   Shift-click to add to a selection.

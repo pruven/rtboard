@@ -9,6 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import App from "./App";
+import { sketchPath } from "./sketch";
 import { createBoard, type Workspace, type Item } from "./model";
 import { storageKey } from "./storage";
 const seed = (): Workspace => {
@@ -248,7 +249,7 @@ describe("review regressions", () => {
     const selectable = container.querySelector(drawing ? '[data-item-id="arrow"]' : ".connector-line")!;
     fireEvent.pointerDown(selectable, { button: 0, clientX: 100, clientY: 50, pointerId: 1 });
     fireEvent.pointerUp(canvas, { clientX: 100, clientY: 50, pointerId: 1 });
-    const path = () => container.querySelector(drawing ? ".item-drawing path" : ".connector-line")!.getAttribute("d");
+    const path = () => container.querySelector(drawing ? ".item-drawing path" : ".connector-line")!.getAttribute("data-geometry");
     const before = path();
     const handle = screen.getByRole("button", { name: "Reconnect end" });
     expect(handle.getAttribute("tabindex")).toBe("0");
@@ -277,8 +278,9 @@ describe("review regressions", () => {
     initial.boards[0].items[0].w = 500;
     Object.assign(initial.boards[0].items[1], { x: 600, y: 400, w: 500 });
     const { container } = render(<App initial={initial} />);
-    expect(container.querySelector(".item-drawing path")!.getAttribute("d"))
-      .toBe("M 5 5 L 55 5 L 55 405 L 105 405");
+    const rendered = container.querySelector(".item-drawing path")!;
+    expect(rendered.getAttribute("data-geometry")).toBe("M 5 5 L 55 5 L 55 405 L 105 405");
+    expect(rendered.getAttribute("d")).toBe(sketchPath(rendered.getAttribute("data-geometry")!, "arrow"));
   });
 
   it("keeps a parent-side pan area available while an Instagram player is interactive", () => {
@@ -318,7 +320,7 @@ describe("canvas workflow", () => {
     fireEvent.pointerMove(canvas, { clientX: end.x, clientY: end.y, pointerId: 1 });
     fireEvent.pointerUp(canvas, { clientX: end.x, clientY: end.y, pointerId: 1 });
     const line = () => container.querySelector<HTMLElement>(".item-drawing")!;
-    const path = () => line().querySelector("path")!.getAttribute("d");
+    const path = () => line().querySelector("path")!.getAttribute("data-geometry");
     const beforeX = Number.parseFloat(line().style.left);
     const beforePath = path();
     fireEvent.pointerDown(container.querySelector('[data-item-id="node"]')!, { button: 0, clientX: 350, clientY: 250, pointerId: 2 });
@@ -351,7 +353,7 @@ describe("canvas workflow", () => {
     fireEvent.pointerDown(container.querySelector('[data-item-id="node"]')!, { button: 0, clientX: 350, clientY: 250, pointerId: 3 });
     fireEvent.pointerMove(canvas, { clientX: 450, clientY: 250, pointerId: 3 });
     fireEvent.pointerUp(canvas, { clientX: 450, clientY: 250, pointerId: 3 });
-    expect(container.querySelector(".item-drawing path")!.getAttribute("d")).toBe("M 5 5 L 355 5");
+    expect(container.querySelector(".item-drawing path")!.getAttribute("data-geometry")).toBe("M 5 5 L 355 5");
   });
 
   it.each(["Straight", "Curved", "Elbow"])("supports all arrowhead modes on %s connectors and their previews", (route) => {
@@ -373,17 +375,17 @@ describe("canvas workflow", () => {
     expect(preview.getAttribute("marker-end")).toBe("url(#arrow)");
     fireEvent.pointerUp(canvas, { clientX: 288, clientY: 250, pointerId: 1 });
     const path = () => container.querySelector(".connector-line")!;
-    expect(path().getAttribute("marker-start")).toBe("url(#arrow)");
-    expect(path().getAttribute("marker-end")).toBe("url(#arrow)");
+    expect(path().nextElementSibling!.getAttribute("marker-start")).toBe("url(#arrow)");
+    expect(path().nextElementSibling!.getAttribute("marker-end")).toBe("url(#arrow)");
     fireEvent.pointerDown(path(), { button: 0 });
     fireEvent.click(screen.getByRole("button", { name: "None" }));
-    expect(path().getAttribute("marker-start")).toBeNull();
-    expect(path().getAttribute("marker-end")).toBeNull();
+    expect(path().nextElementSibling!.getAttribute("marker-start")).toBeNull();
+    expect(path().nextElementSibling!.getAttribute("marker-end")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "One end" }));
-    expect(path().getAttribute("marker-start")).toBeNull();
-    expect(path().getAttribute("marker-end")).toBe("url(#arrow)");
+    expect(path().nextElementSibling!.getAttribute("marker-start")).toBeNull();
+    expect(path().nextElementSibling!.getAttribute("marker-end")).toBe("url(#arrow)");
     fireEvent.keyDown(window, { key: "z", ctrlKey: true });
-    expect(path().getAttribute("marker-end")).toBeNull();
+    expect(path().nextElementSibling!.getAttribute("marker-end")).toBeNull();
     expect(screen.getByRole("button", { name: "None" }).getAttribute("aria-pressed")).toBe("true");
   });
 
@@ -396,11 +398,11 @@ describe("canvas workflow", () => {
     fireEvent.pointerMove(canvas, { clientX: 220, clientY: 120, pointerId: 1 });
     fireEvent.pointerUp(canvas, { clientX: 220, clientY: 120, pointerId: 1 });
     const path = () => container.querySelector(".item-drawing path")!;
-    expect(path().getAttribute("marker-start")).toBeNull();
-    expect(path().getAttribute("marker-end")).toBeNull();
+    expect(path().nextElementSibling!.getAttribute("marker-start")).toBeNull();
+    expect(path().nextElementSibling!.getAttribute("marker-end")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Both ends" }));
-    expect(path().getAttribute("marker-start")).toBe("url(#arrow)");
-    expect(path().getAttribute("marker-end")).toBe("url(#arrow)");
+    expect(path().nextElementSibling!.getAttribute("marker-start")).toBe("url(#arrow)");
+    expect(path().nextElementSibling!.getAttribute("marker-end")).toBe("url(#arrow)");
   });
 
   it("snaps routed connectors to elements, edits routes, reconnects endpoints, and follows moved elements", () => {
@@ -419,26 +421,26 @@ describe("canvas workflow", () => {
     expect(container.querySelector('[data-item-id="b"]')!.classList.contains("snap-target")).toBe(true);
     fireEvent.pointerUp(canvas, { clientX: 288, clientY: 250, pointerId: 1 });
     const path = () => container.querySelector<SVGPathElement>(".connector-line")!;
-    expect(path().getAttribute("d")).toBe("M 100 50 L 200 50 L 200 250 L 300 250");
+    expect(path().getAttribute("data-geometry")).toBe("M 100 50 L 200 50 L 200 250 L 300 250");
     fireEvent.pointerDown(path(), { button: 0 });
     fireEvent.click(screen.getByRole("button", { name: "Curved" }));
-    expect(path().getAttribute("d")).toContain(" C ");
+    expect(path().getAttribute("data-geometry")).toContain(" C ");
     fireEvent.keyDown(window, { key: "z", ctrlKey: true });
-    expect(path().getAttribute("d")).not.toContain(" C ");
+    expect(path().getAttribute("data-geometry")).not.toContain(" C ");
     fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
-    expect(path().getAttribute("d")).toContain(" C ");
+    expect(path().getAttribute("data-geometry")).toContain(" C ");
     fireEvent.pointerDown(screen.getByLabelText("Reconnect end"), { button: 0, clientX: 300, clientY: 250, pointerId: 2 });
     fireEvent.pointerMove(canvas, { clientX: 588, clientY: 250, pointerId: 2 });
     fireEvent.pointerUp(canvas, { clientX: 588, clientY: 250, pointerId: 2 });
-    expect(path().getAttribute("d")).toBe("M 100 50 C 350 50 350 250 600 250");
+    expect(path().getAttribute("data-geometry")).toBe("M 100 50 C 350 50 350 250 600 250");
     fireEvent.pointerDown(screen.getByLabelText("Reconnect start"), { button: 0, clientX: 100, clientY: 50, pointerId: 4 });
     fireEvent.pointerMove(canvas, { clientX: 900, clientY: 500, pointerId: 4 });
     fireEvent.pointerUp(canvas, { clientX: 900, clientY: 500, pointerId: 4 });
-    expect(path().getAttribute("d")).toBe("M 100 50 C 350 50 350 250 600 250");
+    expect(path().getAttribute("data-geometry")).toBe("M 100 50 C 350 50 350 250 600 250");
     fireEvent.pointerDown(container.querySelector('[data-item-id="a"]')!, { button: 0, clientX: 50, clientY: 50, pointerId: 3 });
     fireEvent.pointerMove(canvas, { clientX: 90, clientY: 50, pointerId: 3 });
     fireEvent.pointerUp(canvas, { clientX: 90, clientY: 50, pointerId: 3 });
-    expect(path().getAttribute("d")).toBe("M 140 50 C 370 50 370 250 600 250");
+    expect(path().getAttribute("data-geometry")).toBe("M 140 50 C 370 50 370 250 600 250");
   });
 
   it("keeps standalone arrows routed and supports cancelling a connector gesture", () => {
@@ -449,7 +451,7 @@ describe("canvas workflow", () => {
     fireEvent.pointerDown(canvas, { button: 0, clientX: 20, clientY: 20, pointerId: 1 });
     fireEvent.pointerMove(canvas, { clientX: 220, clientY: 120, pointerId: 1 });
     fireEvent.pointerUp(canvas, { clientX: 220, clientY: 120, pointerId: 1 });
-    expect(container.querySelector(".item-drawing path")!.getAttribute("d")).toContain(" C ");
+    expect(container.querySelector(".item-drawing path")!.getAttribute("data-geometry")).toContain(" C ");
     fireEvent.keyDown(window, { key: "c" });
     fireEvent.pointerDown(canvas, { button: 0, clientX: 320, clientY: 20, pointerId: 2 });
     fireEvent.pointerMove(canvas, { clientX: 520, clientY: 120, pointerId: 2 });
@@ -526,12 +528,17 @@ describe("canvas workflow", () => {
     );
     expect(screen.getAllByRole("button", { pressed: false })).toHaveLength(5);
   });
-  it("creates text at a double-click, saves it, and restores it after reload", async () => {
+  it("opens a sticky note at a double-click, saves it, and restores it after reload", async () => {
     const first = render(<App initial={seed()} />);
     fireEvent.doubleClick(first.container.querySelector(".canvas")!, {
       clientX: 100,
       clientY: 120,
     });
+    const note = first.container.querySelector<HTMLElement>(".item-note")!;
+    expect(note.style.left).toBe("100px");
+    expect(note.style.top).toBe("120px");
+    expect(note.contains(screen.getByLabelText("Edit text"))).toBe(true);
+    expect(first.container.querySelector(".item-text")).toBeNull();
     write("Remember this");
     expect(screen.getByText("Remember this")).toBeTruthy();
     await waitFor(() =>
@@ -636,5 +643,153 @@ describe("canvas workflow", () => {
         2,
       ),
     );
+  });
+});
+
+describe("sketch canvas interactions", () => {
+  it("opens and focuses a text box immediately with T without intercepting typing", () => {
+    const { container } = render(<App initial={seed()} />);
+    fireEvent.keyDown(window, { key: "t" });
+    const editor = screen.getByLabelText("Edit text");
+    expect(document.activeElement).toBe(editor);
+    expect(container.querySelector(".item-text")!.contains(editor)).toBe(true);
+    for (const repeat of [false, true]) {
+      const key = new KeyboardEvent("keydown", { key: "t", repeat, bubbles: true, cancelable: true });
+      expect(fireEvent(editor, key)).toBe(true);
+      expect(key.defaultPrevented).toBe(false);
+    }
+    fireEvent.change(editor, { target: { value: "text" } });
+    expect(container.querySelectorAll(".item-text")).toHaveLength(1);
+    expect(editor).toHaveProperty("value", "text");
+    fireEvent.blur(editor);
+    fireEvent.pointerMove(container.querySelector(".canvas")!, { clientX: 210, clientY: 160 });
+    fireEvent.keyDown(window, { key: "T", shiftKey: true });
+    const next = screen.getByLabelText("Edit text").closest<HTMLElement>(".item-text")!;
+    expect(next.style.left).toBe("210px");
+    expect(next.style.top).toBe("160px");
+  });
+
+  it("constrains shapes, draws sketch outlines, and supports ellipse shortcuts", () => {
+    const { container } = render(<App initial={seed()} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "r" });
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 40, clientY: 40, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 200, clientY: 100, shiftKey: true, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 200, clientY: 100, shiftKey: true, pointerId: 1 });
+    const shape = container.querySelector<HTMLElement>(".item-shape")!;
+    expect(shape.style.width).toBe("160px");
+    expect(shape.style.height).toBe("160px");
+    expect(shape.querySelector(".sketch-shape path")!.getAttribute("d")).toContain("C");
+    expect(shape.style.fontFamily).toContain("Kalam");
+    fireEvent.keyDown(window, { key: "o" });
+    expect(screen.getByRole("button", { name: "Ellipse" }).classList.contains("active")).toBe(true);
+  });
+
+  it("samples a pen gesture and renders a smooth path through the canvas", () => {
+    const { container } = render(<App initial={seed()} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "p" });
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 40, clientY: 50, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 60, clientY: 80, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 100, clientY: 90, pointerId: 1 });
+    expect(container.querySelector(".connections > path")!.getAttribute("d"))
+      .toBe("M 40 50 Q 60 80 80 85 L 100 90");
+    fireEvent.pointerUp(canvas, { clientX: 100, clientY: 90, pointerId: 1 });
+    const drawing = container.querySelector<HTMLElement>(".item-drawing")!;
+    expect(drawing.style.left).toBe("36px");
+    expect(drawing.style.top).toBe("46px");
+    expect(drawing.querySelector("path")!.getAttribute("d")).toBe("M 4 4 Q 24 34 44 39 L 64 44");
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(container.querySelector(".item-drawing")).toBeNull();
+  });
+
+  it("shows the chosen sticky-note fill during drawing", () => {
+    const { container } = render(<App initial={seed()} />);
+    const canvas = container.querySelector(".canvas")!;
+    fireEvent.keyDown(window, { key: "n" });
+    fireEvent.click(screen.getByRole("button", { name: "Fill #a5d8ff" }));
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 40, clientY: 50, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 200, clientY: 180, pointerId: 1 });
+    const fill = container.querySelector<HTMLElement>(".shape-preview")!.style.background;
+    expect(fill).not.toBe("transparent");
+    fireEvent.pointerUp(canvas, { clientX: 200, clientY: 180, pointerId: 1 });
+    expect(container.querySelector<HTMLElement>(".item-note")!.style.background).toBe(fill);
+  });
+
+  it("passes the selected connector color to its endpoint markers", () => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "a", kind: "shape", x: 0, y: 0, w: 100, h: 100, text: "A" },
+      { id: "b", kind: "shape", x: 300, y: 0, w: 100, h: 100, text: "B" },
+    ];
+    initial.boards[0].connections = [{ id: "ab", from: "a", to: "b" }];
+    const { container } = render(<App initial={initial} />);
+    const line = container.querySelector(".connector-line")!;
+    const tips = line.nextElementSibling!;
+    expect(tips.getAttribute("stroke")).toBe("currentColor");
+    expect(tips.getAttribute("stroke-opacity")).toBe("0");
+    const marker = container.querySelector("#arrow path")!;
+    expect(marker.getAttribute("stroke")).toBe("context-stroke");
+    expect(marker.getAttribute("stroke-opacity")).toBe("1");
+    fireEvent.pointerDown(line, { button: 0 });
+    expect((line.parentElement as unknown as SVGElement).style.color).toBe("var(--selection)");
+    fireEvent.pointerDown(container.querySelector(".canvas")!, { button: 0, clientX: 600, clientY: 300, pointerId: 1 });
+    fireEvent.pointerUp(container.querySelector(".canvas")!, { clientX: 600, clientY: 300, pointerId: 1 });
+    expect((line.parentElement as unknown as SVGElement).style.color).toBe("");
+  });
+
+  it.each(["click", "cancel", "blur", "escape"])("does not leave an Alt-drag copy after %s", (ending) => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "node", kind: "shape", x: 20, y: 20, w: 100, h: 100, text: "Original" }];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    const node = container.querySelector<HTMLElement>('[data-item-id="node"]')!;
+    fireEvent.pointerDown(node, { button: 0, clientX: 50, clientY: 50, altKey: true, pointerId: 1 });
+    expect(container.querySelectorAll(".board-item")).toHaveLength(1);
+    if (ending === "click") {
+      fireEvent.pointerMove(canvas, { clientX: 51, clientY: 51, pointerId: 1 });
+      fireEvent.pointerUp(canvas, { clientX: 51, clientY: 51, pointerId: 1 });
+    } else {
+      fireEvent.pointerMove(canvas, { clientX: 180, clientY: 80, pointerId: 1 });
+      expect(container.querySelectorAll(".board-item")).toHaveLength(2);
+      if (ending === "cancel") fireEvent.pointerCancel(canvas, { pointerId: 1 });
+      else if (ending === "blur") fireEvent.blur(window);
+      else fireEvent.keyDown(window, { key: "Escape" });
+      fireEvent.pointerUp(canvas, { clientX: 180, clientY: 80, pointerId: 1 });
+    }
+    expect(container.querySelectorAll(".board-item")).toHaveLength(1);
+    expect(node.style.left).toBe("20px");
+    expect(node.style.top).toBe("20px");
+  });
+
+  it.each(["x", "y"])("keeps the initial Shift-drag %s axis when the pointer crosses the diagonal", (axis) => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "node", kind: "shape", x: 20, y: 20, w: 100, h: 100, text: "Node" }];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    const node = container.querySelector<HTMLElement>('[data-item-id="node"]')!;
+    fireEvent.pointerDown(node, { button: 0, clientX: 50, clientY: 50, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: axis === "x" ? 90 : 80, clientY: axis === "x" ? 80 : 90, shiftKey: true, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: axis === "x" ? 100 : 180, clientY: axis === "x" ? 180 : 100, shiftKey: true, pointerId: 1 });
+    expect(node.style.left).toBe(axis === "x" ? "70px" : "20px");
+    expect(node.style.top).toBe(axis === "x" ? "20px" : "70px");
+    fireEvent.pointerUp(canvas, { clientX: 100, clientY: 180, pointerId: 1 });
+  });
+
+  it("Alt-drags a copy along one axis and undoes the entire gesture", () => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "node", kind: "shape", x: 20, y: 20, w: 100, h: 100, text: "Original" }];
+    const { container } = render(<App initial={initial} />);
+    const canvas = container.querySelector(".canvas")!;
+    const node = container.querySelector<HTMLElement>('[data-item-id="node"]')!;
+    fireEvent.pointerDown(node, { button: 0, clientX: 50, clientY: 50, altKey: true, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 180, clientY: 80, shiftKey: true, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 180, clientY: 80, pointerId: 1 });
+    const copy = container.querySelector<HTMLElement>('.board-item:not([data-item-id="node"])')!;
+    expect(copy.style.left).toBe("150px");
+    expect(copy.style.top).toBe("20px");
+    expect(node.style.left).toBe("20px");
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(container.querySelectorAll(".board-item")).toHaveLength(1);
   });
 });
