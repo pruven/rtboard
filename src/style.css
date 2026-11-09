@@ -1173,3 +1173,30 @@ hr {
     animation: none !important;
   }
 }
+
+@font-face {
+  font-family: Kalam;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/latin-2.woff2") format("woff2");
+}
+.sketch-shape {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.item-shape > .card-text,
+.item-shape > textarea {
+  position: relative;
+}
+.item-text, .item-note, .item-shape {
+  font-synthesis: weight style;
+}
+.connector-line {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
