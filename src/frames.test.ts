@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 import { createFrame, frameContents, slideCamera } from "./frames";
-import { createBoard, validateBoard, type Item } from "./model";
+import { createBoard, parseBoardFile, shareHtml, validateBoard, type Item } from "./model";
 const node: Item = { id: "node", kind: "note", text: "Hello", x: -100, y: 40, w: 200, h: 100 };
 describe("frames", () => {
   it("wraps content with padding and preserves frames through board validation", () => {
@@ -24,12 +24,19 @@ describe("frames", () => {
       expect((frame.y + frame.h) * zoom + offset.y).toBeLessThanOrEqual(height);
     }
   });
-});
 
-it("keeps slide order and names in portable HTML", async () => {
-  const { parseBoardFile, shareHtml } = await import("./model");
-  const frames = [createFrame([], "one", "Opening", { x: 0, y: 0 }), createFrame([], "two", "Closing", { x: 1100, y: 0 })];
-  const html = shareHtml({ ...createBoard(), items: frames });
-  const imported = parseBoardFile(html);
-  expect(imported.items.map((i) => [i.kind, i.text])).toEqual([["frame", "Opening"], ["frame", "Closing"]]);
+  it("keeps slide order, names, and geometry in portable HTML", () => {
+    const frames = [createFrame([], "one", "Opening", { x: -200, y: 80 }), createFrame([], "two", "Closing", { x: 1100, y: 400 })];
+    const imported = parseBoardFile(shareHtml({ ...createBoard(), items: frames }));
+    expect(imported.items).toHaveLength(frames.length);
+    frames.forEach((frame, index) => expect(imported.items[index]).toMatchObject(frame));
+  });
+
+  it.each(["w", "h"] as const)("rejects oversized selections along %s without cropping content", (dimension) => {
+    const item = { ...node, [dimension]: 19936 };
+    const frame = createFrame([item], "frame", "At the limit", { x: 0, y: 0 });
+    expect(frame[dimension]).toBe(20000);
+    expect(frameContents([frame, item], [frame.id])).toContain(item.id);
+    expect(() => createFrame([{ ...item, [dimension]: 19937 }], "frame", "Too large", { x: 0, y: 0 })).toThrow("too large");
+  });
 });

@@ -37,3 +37,25 @@ it("clips shape labels while leaving sketch strokes and following drawings uncli
   expect(clipped).toBe(false);
   expect(downloadBlob).toHaveBeenCalledWith(board.name + ".png", expect.any(Blob));
 });
+
+it.each([false, true])("renders frame titles above their outlines (dark: %s)", async (dark) => {
+  const ctx = {
+    save: vi.fn(), restore: vi.fn(), scale: vi.fn(), fillRect: vi.fn(), translate: vi.fn(),
+    strokeRect: vi.fn(), fillText: vi.fn(),
+    font: "", fillStyle: "", strokeStyle: "", textBaseline: "", textAlign: "",
+  };
+  const canvas = {
+    getContext: () => ctx,
+    toBlob: (callback: BlobCallback) => callback(new Blob(["png"], { type: "image/png" })),
+  };
+  vi.stubGlobal("document", { fonts: { load: async () => [] }, createElement: () => canvas });
+  const board = createBoard();
+  board.items = [{ id: "slide", kind: "frame", text: "Opening slide", x: -100, y: -200, w: 960, h: 540 }];
+  await exportPng(board, dark);
+  expect(ctx.strokeRect).toHaveBeenCalledWith(-100, -200, 960, 540);
+  expect(ctx.fillText).toHaveBeenCalledWith("Opening slide", -100, -208, 960);
+  expect(ctx.font).toBe("12px Geist, sans-serif");
+  expect(ctx.textBaseline).toBe("bottom");
+  expect(ctx.textAlign).toBe("left");
+  expect(ctx.fillStyle).toBe(dark ? "#686868" : "#aaa");
+});
