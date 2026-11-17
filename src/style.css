@@ -1203,3 +1203,82 @@ hr {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+/* Frames stay behind canvas content; their labels remain easy to grab. */
+.board-item.item-frame {
+  border: 1px solid var(--faint);
+  border-radius: 2px;
+  pointer-events: none;
+}
+.frame-label {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 12px Geist, sans-serif;
+  color: var(--muted);
+  cursor: grab;
+  pointer-events: auto;
+}
+.item-frame.selected .frame-label { color: var(--selection); }
+.item-frame .selection-handle.br, .item-frame .drag-edge { pointer-events: auto; }
+.frame-actions {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  z-index: 12;
+}
+.frame-actions button, .presentation-controls button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px;
+  border-radius: 7px;
+}
+.frames-panel {
+  position: absolute;
+  right: 16px;
+  top: 64px;
+  width: min(320px, calc(100% - 32px));
+  max-height: calc(100% - 160px);
+  overflow: auto;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  z-index: 11;
+}
+.frames-heading { display: flex; align-items: center; justify-content: space-between; }
+.frames-panel p { color: var(--muted); font-size: 12px; }
+.frames-panel .add-frame { display: flex; align-items: center; gap: 6px; padding: 8px; width: 100%; border: 1px solid var(--border); border-radius: 6px; }
+.frames-panel ol { list-style: none; margin: 12px 0 0; padding: 0; }
+.frames-panel li { display: flex; align-items: center; gap: 3px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.frames-panel li button { padding: 5px; border-radius: 4px; }
+.frames-panel input { min-width: 0; width: 100%; border: 0; background: transparent; padding: 5px; }
+.canvas.presenting { position: fixed; inset: 0; z-index: 100; background: var(--bg); }
+.presenting > :not(.world):not(.presentation-controls) { display: none; }
+.presenting .item-frame { border-color: transparent; }
+.presenting .frame-label, .presenting .resize-handle { display: none; }
+.presentation-controls {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  z-index: 20;
+}
+.presentation-controls span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 70px; text-align: center; }

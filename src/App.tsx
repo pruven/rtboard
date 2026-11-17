@@ -2,6 +2,10 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import type { PointerEvent as PE, CSSProperties } from "react";
 import {
   MousePointer2,
+  Frame,
+  Play,
+  ChevronLeft,
+  ChevronRight,
   Hand,
   Type,
   PenLine,
@@ -72,6 +76,7 @@ import {
   encodeShare,
   decodeShare,
 } from "./model";
+import { createFrame, frameContents, slideCamera } from "./frames";
 import { canvasFont, shapePaths, sketchPath, penPath } from "./sketch";
 import { readLegacy, saveWorkspace } from "./storage";
 import { exportPng } from "./exportPng";
@@ -138,6 +143,14 @@ export default function App({ initial }: { initial?: Workspace }) {
     [searchIndex, setSearchIndex] = useState(0),
     [notice, setNotice] = useState(""),
     [saved, setSaved] = useState("Saved");
+  const [framesOpen, setFramesOpen] = useState(false);
+  const [slideIndex, setSlideIndex] = useState<number | null>(null);
+  const savedCamera = useRef<{ offset: Point; zoom: number } | null>(null);
+  const frames = board.items.filter((i) => i.kind === "frame");
+  const presenting = slideIndex !== null;
+  const slide = presenting ? frames[slideIndex] : undefined;
+  const presentationActive = useRef(false);
+  presentationActive.current = presenting;
   const [markdown, setMarkdown] = useState("");
   const [markdownError, setMarkdownError] = useState("");
   const markdownFiles = useRef<HTMLInputElement>(null);
@@ -311,6 +324,65 @@ export default function App({ initial }: { initial?: Workspace }) {
       y: (r.height - b.h * z) / 2 - b.y * z - 15,
     });
   };
+  const addFrame = () => {
+    const last = frames.at(-1);
+    const at = last ? { x: last.x + last.w + 112, y: last.y + 32 } : center();
+    const frame = createFrame(board.items.filter((i) => selected.includes(i.id)), uid(), `Slide ${frames.length + 1}`, at);
+    change({ ...board, items: [...board.items, frame] });
+    setSelected([frame.id]);
+    chooseTool("select");
+    setFramesOpen(true);
+  };
+  const reorderFrame = (id: string, direction: number) => {
+    const items = [...board.items];
+    const index = frames.findIndex((f) => f.id === id);
+    const other = frames[index + direction];
+    if (!other) return;
+    const a = items.findIndex((i) => i.id === id), b = items.findIndex((i) => i.id === other.id);
+    [items[a], items[b]] = [items[b], items[a]];
+    change({ ...board, items });
+  };
+  const startPresentation = () => {
+    if (!frames.length) return;
+    cancelGesture();
+    savedCamera.current = camera.current;
+    setEditing(null);
+    setInteracting(null);
+    setSelected([]);
+    setSelectedConnection(null);
+    setSearchOpen(false);
+    setSearch("");
+    setContext(null);
+    setMenu(false);
+    setModal(null);
+    setSpace(false);
+    chooseTool("select");
+    setSlideIndex(0);
+    requestAnimationFrame(() => document.getElementById("exit-presentation")?.focus());
+  };
+  const exitPresentation = () => {
+    setSlideIndex(null);
+    if (savedCamera.current) {
+      setOffset(savedCamera.current.offset);
+      setZoom(savedCamera.current.zoom);
+    }
+    savedCamera.current = null;
+    requestAnimationFrame(() => document.getElementById("present-slides")?.focus());
+  };
+  useEffect(() => {
+    if (!presenting) return;
+    if (!slide) { exitPresentation(); return; }
+    const fitSlide = () => {
+      const r = canvas.current?.getBoundingClientRect();
+      if (!r) return;
+      const view = slideCamera(slide, r.width, r.height);
+      setZoom(view.zoom);
+      setOffset(view.offset);
+    };
+    fitSlide();
+    window.addEventListener("resize", fitSlide);
+    return () => window.removeEventListener("resize", fitSlide);
+  }, [presenting, slide]);
   const fit = () => frameItems(board.items);
   const zoomAt = (next: number, cx?: number, cy?: number) => {
     const c = camera.current,
@@ -387,7 +459,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     setEditing(i.id);
   };
   const duplicate = () => {
-    const result = duplicateItems(board, selected);
+    const result = duplicateItems(board, frameContents(board.items, selected));
     change(result.board);
     setSelected(result.ids);
   };
@@ -705,7 +777,7 @@ export default function App({ initial }: { initial?: Workspace }) {
       start: p,
       last: p,
       before: board,
-      ids,
+      ids: kind === "drag" ? frameContents(board.items, ids) : ids,
       origin: { x: e.clientX, y: e.clientY },
       points: [[p.x, p.y]],
       from,
@@ -725,6 +797,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     setPreview(null);
   };
   const down = (e: PE) => {
+    if (presenting) return;
     const pan = tool === "hand" || space || e.button === 1;
     if (
       (e.target as HTMLElement)?.closest?.("[data-ui]") ||
@@ -786,6 +859,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     begin("marquee", e);
   };
   const itemDown = (e: PE, i: Item) => {
+    if (presenting) return;
     if (
       (e.target as HTMLElement)?.closest?.(
         "button,textarea,a,iframe,video,audio",
@@ -1070,6 +1144,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     const el = canvas.current;
     if (!el || gallery) return;
     const wheel = (e: WheelEvent) => {
+      if (presentationActive.current) { e.preventDefault(); return; }
       if (
         (e.target as HTMLElement)?.closest?.(
           "textarea,iframe,video,audio,[data-ui]",
@@ -1109,6 +1184,17 @@ export default function App({ initial }: { initial?: Workspace }) {
   };
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      if (presenting) {
+        if (e.key === "Escape") { e.preventDefault(); exitPresentation(); }
+        else if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(e.key)) {
+          e.preventDefault(); setSlideIndex((i) => Math.min(frames.length - 1, (i ?? 0) + 1));
+        } else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(e.key)) {
+          e.preventDefault(); setSlideIndex((i) => Math.max(0, (i ?? 0) - 1));
+        } else if (e.key === "Home" || e.key === "End") {
+          e.preventDefault(); setSlideIndex(e.key === "Home" ? 0 : frames.length - 1);
+        }
+        return;
+      }
       if (e.key === "Escape") {
         if (modal === "reconnect") {
           e.preventDefault();
@@ -1184,7 +1270,7 @@ export default function App({ initial }: { initial?: Workspace }) {
         change({
           ...board,
           items: board.items.map((i) =>
-            selected.includes(i.id)
+            frameContents(board.items, selected).includes(i.id)
               ? {
                   ...i,
                   x:
@@ -1262,6 +1348,7 @@ export default function App({ initial }: { initial?: Workspace }) {
   useEffect(() => {
     const copy = (e: ClipboardEvent) => {
       if (
+        presenting ||
         gallery ||
         modal ||
         !selected.length ||
@@ -1286,6 +1373,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     };
     const paste = (e: ClipboardEvent) => {
       if (
+        presenting ||
         gallery ||
         modal ||
         (e.target as HTMLElement)?.closest?.("input,textarea,[contenteditable]")
@@ -1475,7 +1563,7 @@ export default function App({ initial }: { initial?: Workspace }) {
   const effectiveTool = tool === "hand" || space || preview?.kind === "pan" ? "hand" : tool;
   return (
     <div className="app">
-      <header className="topbar">
+      <header className="topbar" inert={presenting}>
         <button
           className="wordmark"
           title="All boards"
@@ -1659,8 +1747,9 @@ export default function App({ initial }: { initial?: Workspace }) {
       ) : (
         <main
           ref={canvas}
-          className={`canvas tool-${tool} ${effectiveTool === "hand" ? "panning" : ""} ${preview?.kind === "pan" ? "is-panning" : ""} ${preview?.kind === "drag" ? "is-dragging" : ""}`}
+          className={`canvas ${presenting ? "presenting" : ""} tool-${tool} ${effectiveTool === "hand" ? "panning" : ""} ${preview?.kind === "pan" ? "is-panning" : ""} ${preview?.kind === "drag" ? "is-dragging" : ""}`}
           onPointerDownCapture={(e) => {
+            if (presenting && !(e.target as HTMLElement)?.closest?.("[data-ui]")) { e.stopPropagation(); return; }
             if ((e.button !== 0 && e.button !== 1) ||
                 (e.target as HTMLElement)?.closest?.("[data-ui]")) return;
             if (tool === "hand" || space || e.button === 1) {
@@ -1681,6 +1770,7 @@ export default function App({ initial }: { initial?: Workspace }) {
             cancelGesture();
           }}
           onDoubleClick={(e) => {
+            if (presenting) return;
             if (
               tool === "select" && !space &&
               !(e.target as HTMLElement)?.closest?.(".board-item,[data-ui]")
@@ -1688,6 +1778,7 @@ export default function App({ initial }: { initial?: Workspace }) {
               addNote(point(e.clientX, e.clientY));
           }}
           onContextMenu={(e) => {
+            if (presenting) { e.preventDefault(); return; }
             if ((e.target as HTMLElement)?.closest?.("textarea,input,iframe"))
               return;
             e.preventDefault();
@@ -1699,6 +1790,7 @@ export default function App({ initial }: { initial?: Workspace }) {
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
+            if (presenting) return;
             const at = point(e.clientX, e.clientY);
             if (e.dataTransfer.files.length)
               void readFiles(e.dataTransfer.files, at);
@@ -1718,6 +1810,7 @@ export default function App({ initial }: { initial?: Workspace }) {
             className="world"
             style={{
               transform: `translate(${offset.x}px,${offset.y}px) scale(${zoom})`,
+              ...(slide ? { clipPath: `polygon(${slide.x}px ${slide.y}px, ${slide.x + slide.w}px ${slide.y}px, ${slide.x + slide.w}px ${slide.y + slide.h}px, ${slide.x}px ${slide.y + slide.h}px)` } : {}),
             }}
           >
             <svg className="connections">
@@ -1776,7 +1869,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                 }}
                 onDoubleClick={(e) => e.stopPropagation()} />
             )}
-            {board.items.map((i) => (
+            {[...board.items.filter((i) => i.kind === "frame"), ...board.items.filter((i) => i.kind !== "frame")].map((i) => (
               <div
                 key={i.id}
                 data-item-id={i.id}
@@ -1814,6 +1907,7 @@ export default function App({ initial }: { initial?: Workspace }) {
                   if (!selected.includes(i.id)) setSelected([i.id]);
                 }}
               >
+                {i.kind === "frame" && <div className="frame-label">{frames.findIndex((f) => f.id === i.id) + 1} · {i.text}</div>}
                 {i.kind === "shape" && (
                   <svg className="sketch-shape" viewBox={`0 0 ${i.w} ${i.h}`} preserveAspectRatio="none" aria-hidden="true">
                     {shapePaths(i).map((p, n) => <path key={n} d={p.d} fill={p.fill || "none"} stroke={p.stroke} strokeWidth={p.strokeWidth} strokeLinecap="round" strokeLinejoin="round" />)}
@@ -2300,6 +2394,29 @@ export default function App({ initial }: { initial?: Workspace }) {
               )}
             </div>
           )}
+          {!presenting && <div className="frame-actions" data-ui>
+            <button aria-label="Frames" aria-expanded={framesOpen} className={framesOpen ? "active" : ""} onClick={() => setFramesOpen(!framesOpen)}><Frame size={17} /> Frames{frames.length > 0 && ` · ${frames.length}`}</button>
+            <button id="present-slides" aria-label="Present slides" disabled={!frames.length} onClick={startPresentation}><Play size={16} /> Present</button>
+          </div>}
+          {framesOpen && !presenting && <aside className="frames-panel" data-ui aria-label="Slides">
+            <div className="frames-heading"><strong>Frames</strong><button aria-label="Close frames" onClick={() => setFramesOpen(false)}><X size={16} /></button></div>
+            <p>Each frame is a slide. Drag its label to move it with its contents.</p>
+            <button className="add-frame" onClick={addFrame}><Plus size={16} />{selected.length ? "Frame selection" : "Add frame"}</button>
+            {!frames.length && <p>Add a frame, then arrange your content inside it.</p>}
+            <ol>{frames.map((f, index) => <li key={f.id}>
+              <button aria-label={`Go to slide ${index + 1}`} onClick={() => { setSelected([f.id]); frameItems([f]); }}>{index + 1}</button>
+              <input aria-label={`Slide ${index + 1} title`} value={f.text} maxLength={120} onFocus={() => { setHistory((h) => [...h.slice(-79), board]); setFuture([]); }} onChange={(e) => patch(f.id, { text: e.target.value })} />
+              <button aria-label={`Move slide ${index + 1} up`} disabled={index === 0} onClick={() => reorderFrame(f.id, -1)}>↑</button>
+              <button aria-label={`Move slide ${index + 1} down`} disabled={index === frames.length - 1} onClick={() => reorderFrame(f.id, 1)}>↓</button>
+              <button aria-label={`Delete slide ${index + 1}`} onClick={() => { change({ ...board, items: board.items.filter((i) => i.id !== f.id), connections: board.connections.filter((c) => c.from !== f.id && c.to !== f.id) }); setSelected(selected.filter((id) => id !== f.id)); }}><Trash2 size={14} /></button>
+            </li>)}</ol>
+          </aside>}
+          {presenting && <div className="presentation-controls" data-ui role="toolbar" aria-label="Presentation controls">
+            <button aria-label="Previous slide" disabled={slideIndex === 0} onClick={() => setSlideIndex((i) => Math.max(0, (i ?? 0) - 1))}><ChevronLeft size={20} /></button>
+            <span aria-live="polite">{(slideIndex ?? 0) + 1} / {frames.length} · {slide?.text}</span>
+            <button aria-label="Next slide" disabled={slideIndex === frames.length - 1} onClick={() => setSlideIndex((i) => Math.min(frames.length - 1, (i ?? 0) + 1))}><ChevronRight size={20} /></button>
+            <button id="exit-presentation" aria-label="Exit presentation" onClick={exitPresentation}><X size={18} /> Exit</button>
+          </div>}
           <div
             className="toolbar"
             role="toolbar"

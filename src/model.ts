@@ -1,7 +1,7 @@
 import { instagramPermalink } from "./instagram";
 
 export type Kind =
-  "note" | "text" | "image" | "link" | "drawing" | "shape" | "video" | "audio";
+  "frame" | "note" | "text" | "image" | "link" | "drawing" | "shape" | "video" | "audio";
 export type Point = { x: number; y: number };
 export type ConnectorRoute = "straight" | "curved" | "elbow";
 export type ConnectorArrowheads = "one" | "both" | "none";
@@ -167,6 +167,7 @@ export function validateBoard(input: unknown): Board {
     if (
       !i ||
       ![
+        "frame",
         "note",
         "text",
         "image",
