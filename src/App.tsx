@@ -150,6 +150,7 @@ export default function App({ initial }: { initial?: Workspace }) {
   const presenting = slideIndex !== null;
   const slide = presenting ? frames[slideIndex] : undefined;
   const fullscreenTarget = useRef<HTMLElement | null>(null);
+  const fullscreenGeneration = useRef(0);
   const presentationActive = useRef(false);
   presentationActive.current = presenting;
   const [markdown, setMarkdown] = useState("");
@@ -369,16 +370,19 @@ export default function App({ initial }: { initial?: Workspace }) {
     setSlideIndex(0);
     presentationActive.current = true;
     const target = canvas.current;
+    const generation = ++fullscreenGeneration.current;
     if (target?.requestFullscreen) {
       fullscreenTarget.current = target;
       void target.requestFullscreen().then(() => {
+        if (generation !== fullscreenGeneration.current) return;
         // Exit may have been pressed while the browser was entering fullscreen.
-        if (!presentationActive.current && document.fullscreenElement === target) {
+        if (!presentationActive.current && target.contains(document.fullscreenElement)) {
           void document.exitFullscreen().catch(() => {});
         }
       }).catch(() => {
+        if (generation !== fullscreenGeneration.current || !presentationActive.current) return;
         fullscreenTarget.current = null;
-        if (presentationActive.current) toast("Fullscreen is unavailable. Presenting in this window.");
+        toast("Fullscreen is unavailable. Presenting in this window.");
       });
     }
     requestAnimationFrame(() => document.getElementById("exit-presentation")?.focus());
@@ -387,7 +391,7 @@ export default function App({ initial }: { initial?: Workspace }) {
     presentationActive.current = false;
     const target = fullscreenTarget.current;
     fullscreenTarget.current = null;
-    if (target && document.fullscreenElement === target) {
+    if (target && target.contains(document.fullscreenElement)) {
       void document.exitFullscreen().catch(() => {});
     }
     setSlideIndex(null);
@@ -400,7 +404,7 @@ export default function App({ initial }: { initial?: Workspace }) {
   };
   useEffect(() => {
     const fullscreenChange = () => {
-      if (fullscreenTarget.current && document.fullscreenElement !== fullscreenTarget.current) {
+      if (fullscreenTarget.current && !fullscreenTarget.current.contains(document.fullscreenElement)) {
         exitPresentation();
       }
     };
@@ -410,7 +414,7 @@ export default function App({ initial }: { initial?: Workspace }) {
       presentationActive.current = false;
       const target = fullscreenTarget.current;
       fullscreenTarget.current = null;
-      if (target && document.fullscreenElement === target) {
+      if (target && target.contains(document.fullscreenElement)) {
         void document.exitFullscreen().catch(() => {});
       }
     };
