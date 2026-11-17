@@ -32,6 +32,7 @@ Open the URL Vite prints. `bun run build` produces `dist/` for any static host; 
 ## Files and sharing
 
 - File → Save as .rtboard creates a portable editable backup with attached media.
+- File → Import Markdown accepts pasted text or `.md` / `.markdown` files. Headings, paragraphs, nested ordered/unordered lists, and task lists become editable notes connected by hierarchy. Code blocks and inline Markdown stay as plain text; HTML is never executed. You can also drop Markdown files onto the canvas. Imports are limited to 1 MB and 500 notes, preserve existing items, and can be undone in one step.
 - File → Open imports `.rtboard`, JSON, or rtboard's exported HTML files. The `.crboard` format is not supported.
 - Export shareable HTML packages media, drawings, shapes, connectors, and a standalone pan/zoom viewer. Supported embeds remain playable online. The same HTML file can be imported back into rtboard for editing.
 - Copy share link embeds compressed board data in the URL fragment. Large boards should use HTML export instead; links are limited to 120,000 encoded characters.
