@@ -85,7 +85,12 @@ export async function exportPng(board: Board, dark: boolean) {
       y += size * 1.4;
     }
   };
-  for (const i of board.items) {
+  for (const i of board.items.filter((i) => i.kind === "frame")) {
+    ctx.strokeStyle = dark ? "#686868" : "#aaa";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(i.x, i.y, i.w, i.h);
+  }
+  for (const i of board.items.filter((i) => i.kind !== "frame")) {
     ctx.save();
     if (!["shape", "drawing"].includes(i.kind)) {
       ctx.beginPath();

@@ -961,3 +961,72 @@ describe("Markdown import", () => {
     expect(container.querySelectorAll(".board-item")).toHaveLength(0);
   });
 });
+
+describe("frames and presentation", () => {
+  it("creates, renames, reorders and deletes slides without removing canvas content", () => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "note", kind: "note", text: "Keep me", x: 0, y: 0, w: 200, h: 100 }];
+    const { container } = render(<App initial={initial} />);
+    fireEvent.click(screen.getByRole("button", { name: "Frames" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add frame" }));
+    fireEvent.change(screen.getByLabelText("Slide 1 title"), { target: { value: "Opening" } });
+    fireEvent.click(screen.getByRole("button", { name: "Frame selection" }));
+    fireEvent.change(screen.getByLabelText("Slide 2 title"), { target: { value: "Closing" } });
+    fireEvent.click(screen.getByRole("button", { name: "Move slide 2 up" }));
+    expect((screen.getByLabelText("Slide 1 title") as HTMLInputElement).value).toBe("Closing");
+    fireEvent.click(screen.getByRole("button", { name: "Delete slide 1" }));
+    expect((screen.getByLabelText("Slide 1 title") as HTMLInputElement).value).toBe("Opening");
+    expect(container.querySelector('[data-item-id="note"]')).toBeTruthy();
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(screen.getByLabelText("Slide 2 title")).toBeTruthy();
+  });
+
+  it("presents slides with bounded keyboard navigation, blocks edits, and restores the camera", () => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "a", kind: "frame", text: "Opening", x: 0, y: 0, w: 960, h: 540 },
+      { id: "b", kind: "frame", text: "Closing", x: 1100, y: 0, w: 960, h: 540 },
+    ];
+    const { container } = render(<App initial={initial} />);
+    const world = container.querySelector<HTMLElement>(".world")!;
+    const before = world.style.transform;
+    fireEvent.click(screen.getByRole("button", { name: "Present slides" }));
+    expect(container.querySelector(".canvas.presenting")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(screen.getByText("2 / 2 · Closing")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(screen.getByText("2 / 2 · Closing")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "t" });
+    fireEvent.paste(window, { clipboardData: { getData: () => "Unwanted edit", files: [] } });
+    expect(screen.queryByLabelText("Edit text")).toBeNull();
+    expect(container.querySelectorAll(".board-item")).toHaveLength(2);
+    fireEvent.keyDown(window, { key: "Home" });
+    expect(screen.getByText("1 / 2 · Opening")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(container.querySelector(".canvas.presenting")).toBeNull();
+    expect(world.style.transform).toBe(before);
+  });
+});
+
+it("moves a frame with contained content and undoes the entire move", () => {
+  const initial = seed();
+  initial.boards[0].items = [
+    { id: "frame", kind: "frame", text: "Slide", x: 0, y: 0, w: 960, h: 540 },
+    { id: "inside", kind: "note", text: "Inside", x: 50, y: 50, w: 200, h: 100 },
+    { id: "outside", kind: "note", text: "Outside", x: 1100, y: 50, w: 200, h: 100 },
+  ];
+  const { container } = render(<App initial={initial} />);
+  const canvas = container.querySelector(".canvas")!;
+  const frame = container.querySelector<HTMLElement>('[data-item-id="frame"]')!;
+  const inside = container.querySelector<HTMLElement>('[data-item-id="inside"]')!;
+  const outside = container.querySelector<HTMLElement>('[data-item-id="outside"]')!;
+  fireEvent.pointerDown(frame.querySelector(".frame-label")!, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+  fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 100, clientY: 50 });
+  fireEvent.pointerUp(canvas, { pointerId: 1, clientX: 100, clientY: 50 });
+  expect(frame.style.left).toBe("100px");
+  expect(inside.style.left).toBe("150px");
+  expect(outside.style.left).toBe("1100px");
+  fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+  expect(frame.style.left).toBe("0px");
+  expect(inside.style.left).toBe("50px");
+});

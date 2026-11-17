@@ -62,7 +62,7 @@ function viewer() {
     svg.append(tips);
   }
   world.append(svg);
-  for (const i of board.items) {
+  for (const i of [...board.items.filter((i: { kind: string }) => i.kind === "frame"), ...board.items.filter((i: { kind: string }) => i.kind !== "frame")]) {
     const el = document.createElement("div");
     el.className = "item";
     Object.assign(el.style, {
@@ -76,7 +76,13 @@ function viewer() {
       fontStyle: i.italic ? "italic" : "normal",
       textAlign: i.align || "left",
     });
-    if (i.kind === "image") {
+    if (i.kind === "frame") {
+      el.style.border = "1px solid var(--border)";
+      const label = document.createElement("span");
+      label.textContent = i.text;
+      label.style.cssText = "position:absolute;bottom:calc(100% + 8px);font:12px system-ui;white-space:nowrap";
+      el.append(label);
+    } else if (i.kind === "image") {
       const img = new Image();
       img.src = i.src;
       img.alt = i.text;
