@@ -532,6 +532,10 @@ export default function App({ initial }: { initial?: Workspace }) {
     const batch = Array.from(list);
     const markdownBatch = batch.filter((file) => /\.(md|markdown)$/i.test(file.name));
     if (markdownBatch.length) {
+      if (batch.some((file) => /\.(rtboard|json|html)$/i.test(file.name))) {
+        toast("Drop board files and Markdown files separately.");
+        return;
+      }
       const boardId = current.current.id;
       try {
         const sources = await Promise.all(markdownBatch.map(readMarkdown));
@@ -1374,7 +1378,7 @@ export default function App({ initial }: { initial?: Workspace }) {
       els = () =>
         Array.from(
           dialog?.querySelectorAll<HTMLElement>(
-            'button:not(:disabled),input:not(:disabled):not([type="hidden"]),textarea:not(:disabled),a[href]',
+            'button:not(:disabled),input:not(:disabled):not([type="hidden"]),textarea:not(:disabled),select:not(:disabled),a[href]',
           ) || [],
         );
     (dialog?.querySelector<HTMLElement>("input,textarea") || els()[0])?.focus();

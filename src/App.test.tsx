@@ -259,6 +259,19 @@ describe("review regressions", () => {
     expect(screen.getByRole("dialog", { name: "Reconnect endpoint" })).toBeTruthy();
     expect(screen.queryByRole("option", { name: "A" })).toBeNull(); // No self-loop.
     const select = screen.getByLabelText("Attach to element");
+    select.focus();
+    // happy-dom does not navigate on Tab; verify neither trap cancels native navigation.
+    expect(fireEvent.keyDown(select, { key: "Tab" })).toBe(true);
+    expect(document.activeElement).toBe(select);
+    expect(fireEvent.keyDown(select, { key: "Tab", shiftKey: true })).toBe(true);
+    expect(document.activeElement).toBe(select);
+    const apply = screen.getByRole("button", { name: "Apply connection" });
+    const close = screen.getByRole("button", { name: "Close dialog" });
+    apply.focus();
+    fireEvent.keyDown(apply, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(apply);
     fireEvent.change(select, { target: { value: "c" } });
     fireEvent.keyDown(select, { key: "Escape" });
     expect(path()).toBe(before);
@@ -858,9 +871,15 @@ describe("Markdown import", () => {
     ]);
     await waitFor(() => expect(container.querySelectorAll(".board-item")).toHaveLength(5));
     expect(container.querySelectorAll("[data-connection-id]")).toHaveLength(2);
-    const first = screen.getByText("First").closest<HTMLElement>(".board-item")!;
-    const second = screen.getByText("Second").closest<HTMLElement>(".board-item")!;
-    expect(parseFloat(second.style.top)).toBeGreaterThan(parseFloat(first.style.top) + parseFloat(first.style.height));
+    const notes = [...container.querySelectorAll<HTMLElement>(".board-item.selected")].map(({ style }) => ({
+      x: parseFloat(style.left), y: parseFloat(style.top),
+      w: parseFloat(style.width), h: parseFloat(style.height),
+    }));
+    expect(notes).toHaveLength(4);
+    for (const [index, a] of notes.entries()) {
+      for (const b of notes.slice(index + 1))
+        expect(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y).toBe(true);
+    }
     fireEvent.keyDown(window, { key: "z", ctrlKey: true });
     expect(container.querySelectorAll(".board-item")).toHaveLength(1);
     expect(container.querySelectorAll("[data-connection-id]")).toHaveLength(0);
@@ -868,6 +887,27 @@ describe("Markdown import", () => {
     fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
     expect(container.querySelectorAll(".board-item")).toHaveLength(5);
     expect(container.querySelectorAll("[data-connection-id]")).toHaveLength(2);
+  });
+
+  it.each(["rtboard", "json", "html"].flatMap((extension) =>
+    [true, false].map((markdownFirst) => ({ extension, markdownFirst })),
+  ))("rejects mixed Markdown/board drops before reading files (%j)", async ({ extension, markdownFirst }) => {
+    const initial = seed();
+    initial.boards[0].name = "Current board";
+    initial.boards[0].items = [{ id: "existing", kind: "note", x: 0, y: 0, w: 200, h: 100, text: "Keep me" }];
+    const { container } = render(<App initial={initial} />);
+    const markdownFile = new File(["# Imported notes"], "notes.md");
+    const boardFile = new File([JSON.stringify(createBoard("Imported board"))], `board.${extension}`);
+    const readMarkdown = vi.spyOn(markdownFile, "text");
+    const readBoard = vi.spyOn(boardFile, "text");
+    dropMarkdown(container.querySelector(".canvas")!, markdownFirst ? [markdownFile, boardFile] : [boardFile, markdownFile]);
+    await waitFor(() => expect(container.querySelector(".toast")?.textContent).toContain("Drop board files and Markdown files separately."));
+    expect(readMarkdown).not.toHaveBeenCalled();
+    expect(readBoard).not.toHaveBeenCalled();
+    expect((screen.getByRole("textbox", { name: "Board name" }) as HTMLInputElement).value).toBe("Current board");
+    expect(container.querySelectorAll(".board-item")).toHaveLength(1);
+    expect(screen.getByText("Keep me")).toBeTruthy();
+    expect(container.querySelectorAll("[data-connection-id]")).toHaveLength(0);
   });
 
   it.each([
