@@ -149,6 +149,7 @@ export default function App({ initial }: { initial?: Workspace }) {
   const frames = board.items.filter((i) => i.kind === "frame");
   const presenting = slideIndex !== null;
   const slide = presenting ? frames[slideIndex] : undefined;
+  const fullscreenTarget = useRef<HTMLElement | null>(null);
   const presentationActive = useRef(false);
   presentationActive.current = presenting;
   const [markdown, setMarkdown] = useState("");
@@ -366,9 +367,29 @@ export default function App({ initial }: { initial?: Workspace }) {
     setSpace(false);
     chooseTool("select");
     setSlideIndex(0);
+    presentationActive.current = true;
+    const target = canvas.current;
+    if (target?.requestFullscreen) {
+      fullscreenTarget.current = target;
+      void target.requestFullscreen().then(() => {
+        // Exit may have been pressed while the browser was entering fullscreen.
+        if (!presentationActive.current && document.fullscreenElement === target) {
+          void document.exitFullscreen().catch(() => {});
+        }
+      }).catch(() => {
+        fullscreenTarget.current = null;
+        if (presentationActive.current) toast("Fullscreen is unavailable. Presenting in this window.");
+      });
+    }
     requestAnimationFrame(() => document.getElementById("exit-presentation")?.focus());
   };
   const exitPresentation = () => {
+    presentationActive.current = false;
+    const target = fullscreenTarget.current;
+    fullscreenTarget.current = null;
+    if (target && document.fullscreenElement === target) {
+      void document.exitFullscreen().catch(() => {});
+    }
     setSlideIndex(null);
     if (savedCamera.current) {
       setOffset(savedCamera.current.offset);
@@ -377,6 +398,23 @@ export default function App({ initial }: { initial?: Workspace }) {
     savedCamera.current = null;
     requestAnimationFrame(() => document.getElementById("present-slides")?.focus());
   };
+  useEffect(() => {
+    const fullscreenChange = () => {
+      if (fullscreenTarget.current && document.fullscreenElement !== fullscreenTarget.current) {
+        exitPresentation();
+      }
+    };
+    document.addEventListener("fullscreenchange", fullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", fullscreenChange);
+      presentationActive.current = false;
+      const target = fullscreenTarget.current;
+      fullscreenTarget.current = null;
+      if (target && document.fullscreenElement === target) {
+        void document.exitFullscreen().catch(() => {});
+      }
+    };
+  }, []);
   useEffect(() => {
     if (!presenting) return;
     if (!slide) { exitPresentation(); return; }
