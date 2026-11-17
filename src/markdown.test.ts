@@ -32,6 +32,9 @@ describe("Markdown import", () => {
 
   it.each(["", "# Section\n"])("keeps unindented fences outside list scopes (%j)", (prefix) => {
     const { items, connections } = importMarkdown(prefix + "- Parent\n  - Child\n\n```\ncode\n```\n- Sibling");
+    expect(items.map((item) => item.text)).toEqual([
+      ...(prefix ? ["Section"] : []), "Parent", "Child", "code", "Sibling",
+    ]);
     const edges = connections.map((c) => [items.find((i) => i.id === c.from)!.text, items.find((i) => i.id === c.to)!.text]);
     expect(edges).toEqual(prefix ? [
       ["Section", "Parent"], ["Parent", "Child"], ["Section", "code"], ["Section", "Sibling"],
