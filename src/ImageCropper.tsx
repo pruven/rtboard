@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { exportCrop } from "@zriz/core/dom";
+import { exportCrop, type ExportOptions } from "@zriz/core/dom";
 import type { Cropper as CropperApi } from "@zriz/react";
 import * as Cropper from "@zriz/react/cropper";
 import "@zriz/react/styles.css";
+import { MAX_MEDIA_BYTES } from "./media";
 
 export type CroppedImage = { src: string; width: number; height: number };
 
@@ -14,6 +15,7 @@ export function ImageCropper({ src, onApply, onCancel }: {
   const cropper = useRef<CropperApi>(null);
   const running = useRef<AbortController | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [outputType, setOutputType] = useState<ExportOptions["type"]>("image/png");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -28,21 +30,28 @@ export function ImageCropper({ src, onApply, onCancel }: {
     try {
       // Export also reads the initial crop when no gesture has been committed.
       const result = await exportCrop(cropper.current, {
-        type: "image/png",
+        type: outputType,
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
-      if (result.blob.size > 40 * 1024 * 1024) {
+      if (result.blob.size > MAX_MEDIA_BYTES) {
         throw new Error("The cropped image is larger than 40 MB. Choose a smaller crop.");
       }
-      const data = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = () => reject(new Error("Could not read the cropped image."));
-        reader.readAsDataURL(result.blob);
-      });
-      if (!controller.signal.aborted) {
-        onApply({ src: data, width: result.width, height: result.height });
+      const reader = new FileReader();
+      const abortRead = () => reader.abort();
+      controller.signal.addEventListener("abort", abortRead, { once: true });
+      try {
+        const data = await new Promise<string>((resolve, reject) => {
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error("Could not read the cropped image."));
+          reader.onabort = () => reject(new DOMException("Crop canceled.", "AbortError"));
+          reader.readAsDataURL(result.blob);
+        });
+        if (!controller.signal.aborted) {
+          onApply({ src: data, width: result.width, height: result.height });
+        }
+      } finally {
+        controller.signal.removeEventListener("abort", abortRead);
       }
     } catch (error) {
       if (!controller.signal.aborted) {
@@ -60,7 +69,13 @@ export function ImageCropper({ src, onApply, onCancel }: {
     <>
       <h2>Crop image</h2>
       <Cropper.Root src={src} actionsRef={cropper} disabled={saving}
-        onLoad={() => { setLoaded(true); setError(""); }}
+        onLoad={(image) => {
+          // Preserve photo compression; use PNG for GIFs and unknown formats
+          // so transparent pixels are retained.
+          setOutputType(image.mime === "image/jpeg" || image.mime === "image/webp" ? image.mime : "image/png");
+          setLoaded(true);
+          setError("");
+        }}
         onError={() => { setLoaded(false); setError("Could not load this image for cropping."); }}>
         <Cropper.Viewport className="image-crop-viewport">
           <Cropper.Image />

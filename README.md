@@ -24,7 +24,7 @@ Open the URL Vite prints. `bun run build` produces `dist/` for any static host; 
 - Drag selection, Shift-click selection, group movement, duplication, layer order, resizing, arrow-key nudging, undo, and redo. Shift-resize preserves aspect ratio.
 - Drag selected elements by their body or selection border. Drag the space between selected elements to move the group. Selected media can be dragged too; click Interact or double-click it to use playback controls, then grab its border to move it again.
 - Paste links or text, or drag in media. Import lists of links from File. Image, video, and audio files up to 40 MB each are supported.
-- Right-click a selected image and choose Crop image to crop, straighten, rotate, flip, or zoom it. Apply crop saves the result; Cancel keeps the original. Crops support undo and redo.
+- Right-click a selected image and choose Crop image to crop, straighten, rotate, flip, zoom, or reset it. Apply crop saves the result; Cancel keeps the original. Crops support undo and redo.
 - Inline YouTube, Instagram, TikTok, X/Twitter, Vimeo, Spotify, Reddit, Loom, and CodePen embeds. Direct video/audio URLs use native media controls. Other URLs become bookmarks.
 - Instagram cards initialize through Instagram's official embed script, including in HTML exports. Public reels can play inline when Instagram permits it; use the card's open link if a reel requires Instagram or sign-in.
 - Search text, notes, titles, and media names with Ctrl/Cmd F.

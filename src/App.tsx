@@ -82,6 +82,7 @@ import { canvasFont, shapePaths, sketchPath, penPath } from "./sketch";
 import { readLegacy, saveWorkspace } from "./storage";
 import { exportPng } from "./exportPng";
 import { ImageCropper } from "./ImageCropper";
+import { MAX_MEDIA_BYTES } from "./media";
 import { importMarkdown, markdownLimit } from "./markdown";
 import { readTheme, saveTheme } from "./theme";
 import { instagramEmbedDocument, instagramPermalink, instagramSandbox } from "./instagram";
@@ -686,7 +687,7 @@ export default function App({ initial }: { initial?: Workspace }) {
         toast("Supported: images, MP4/WebM video, audio, Markdown, and board files.");
         continue;
       }
-      if (file.size > 40 * 1024 * 1024) {
+      if (file.size > MAX_MEDIA_BYTES) {
         toast("Choose media smaller than 40 MB.");
         continue;
       }
