@@ -24,6 +24,7 @@ import {
   Trash2,
   ArrowUpRight,
   ImagePlus,
+  Crop,
   Link2,
   Undo2,
   Redo2,
@@ -80,11 +81,12 @@ import { createFrame, emptyFrameSize, framePadding, frameContents, slideCamera }
 import { canvasFont, shapePaths, sketchPath, penPath } from "./sketch";
 import { readLegacy, saveWorkspace } from "./storage";
 import { exportPng } from "./exportPng";
+import { ImageCropper } from "./ImageCropper";
 import { importMarkdown, markdownLimit } from "./markdown";
 import { readTheme, saveTheme } from "./theme";
 import { instagramEmbedDocument, instagramPermalink, instagramSandbox } from "./instagram";
 type Tool = "select" | "hand" | "text" | "draw" | "connect" | "shape";
-type Modal = "help" | "links" | "link" | "delete" | "reconnect" | "markdown" | null;
+type Modal = "crop" | "help" | "links" | "link" | "delete" | "reconnect" | "markdown" | null;
 type Gesture = {
   kind: "pan" | "drag" | "resize" | "draw" | "shape" | "connect" | "marquee";
   start: Point;
@@ -153,6 +155,7 @@ export default function App({ initial }: { initial?: Workspace }) {
   const fullscreenGeneration = useRef(0);
   const presentationActive = useRef(false);
   presentationActive.current = presenting;
+  const [cropTarget, setCropTarget] = useState<{ boardId: string; item: Item } | null>(null);
   const [markdown, setMarkdown] = useState("");
   const [markdownError, setMarkdownError] = useState("");
   const markdownFiles = useRef<HTMLInputElement>(null);
@@ -1246,6 +1249,11 @@ export default function App({ initial }: { initial?: Workspace }) {
         return;
       }
       if (e.key === "Escape") {
+        if (modal === "crop") {
+          e.preventDefault();
+          setModal(null);
+          return;
+        }
         if (modal === "reconnect") {
           e.preventDefault();
           closeReconnect();
@@ -1519,7 +1527,7 @@ export default function App({ initial }: { initial?: Workspace }) {
       els = () =>
         Array.from(
           dialog?.querySelectorAll<HTMLElement>(
-            'button:not(:disabled),input:not(:disabled):not([type="hidden"]),textarea:not(:disabled),select:not(:disabled),a[href]',
+            'button:not(:disabled):not([hidden]),input:not(:disabled):not([type="hidden"]),textarea:not(:disabled),select:not(:disabled),a[href],[tabindex="0"]',
           ) || [],
         );
     (dialog?.querySelector<HTMLElement>("input,textarea") || els()[0])?.focus();
@@ -2715,6 +2723,13 @@ export default function App({ initial }: { initial?: Workspace }) {
             <hr />
             {selected.length > 0 && (
               <>
+                {selected.length === 1 && active?.kind === "image" && active.src && (
+                  <button onClick={() => {
+                    setCropTarget({ boardId: board.id, item: { ...active } });
+                    setModal("crop");
+                    setContext(null);
+                  }}><Crop size={15} /> Crop image</button>
+                )}
                 <button
                   onClick={() => {
                     duplicate();
@@ -2762,11 +2777,11 @@ export default function App({ initial }: { initial?: Workspace }) {
           }}
         >
           <section
-            className="modal"
+            className={`modal${modal === "crop" ? " image-crop-modal" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-label={
-              modal === "markdown" ? "Import Markdown" : modal === "reconnect" ? "Reconnect endpoint" : modal === "help"
+              modal === "crop" ? "Crop image" : modal === "markdown" ? "Import Markdown" : modal === "reconnect" ? "Reconnect endpoint" : modal === "help"
                 ? "Keyboard shortcuts"
                 : modal === "delete"
                   ? "Delete board"
@@ -2791,6 +2806,24 @@ export default function App({ initial }: { initial?: Workspace }) {
             >
               <X size={18} />
             </button>
+            {modal === "crop" && cropTarget?.item.src && (
+              <ImageCropper key={cropTarget.item.id} src={cropTarget.item.src}
+                onCancel={() => setModal(null)}
+                onApply={({ src, width, height }) => {
+                  const target = cropTarget.item;
+                  const latest = current.current;
+                  if (latest.id !== cropTarget.boardId || !latest.items.some((i) =>
+                    i.id === target.id && i.kind === "image" && i.src === target.src)) {
+                    toast("The image changed. Open the crop tool again.");
+                    setModal(null);
+                    return;
+                  }
+                  // Keep the displayed width and match the exported crop's aspect ratio.
+                  change({ ...latest, items: latest.items.map((i) => i.id === target.id
+                    ? { ...i, src, h: i.w * height / width } : i) });
+                  setModal(null);
+                }} />
+            )}
             {modal === "reconnect" && reconnectDraft && (
               <form onSubmit={(e) => { e.preventDefault(); commitReconnect(); }}>
                 <h2>Reconnect {reconnectDraft.endpoint === "from" ? "start" : "end"}</h2>
