@@ -1,10 +1,18 @@
 import { bounds, type Item, type Point } from "./model";
 
+export const framePadding = 32;
+export const emptyFrameSize = { w: 960, h: 540 };
+
 export function createFrame(items: Item[], id: string, title: string, at: Point): Item {
   const content = items.filter((i) => i.kind !== "frame");
-  const box = content.length ? bounds(content) : { ...at, w: 896, h: 476 };
-  return { id, kind: "frame", text: title, x: box.x - 32, y: box.y - 32,
-    w: Math.min(20000, box.w + 64), h: Math.min(20000, box.h + 64) };
+  const box = content.length ? bounds(content) : {
+    ...at, w: emptyFrameSize.w - framePadding * 2, h: emptyFrameSize.h - framePadding * 2,
+  };
+  const w = box.w + framePadding * 2, h = box.h + framePadding * 2;
+  if (w > 20000 || h > 20000) {
+    throw new Error("This selection is too large for one frame. Split it into smaller slides.");
+  }
+  return { id, kind: "frame", text: title, x: box.x - framePadding, y: box.y - framePadding, w, h };
 }
 
 export function frameContents(items: Item[], ids: string[]): string[] {

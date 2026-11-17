@@ -89,6 +89,13 @@ export async function exportPng(board: Board, dark: boolean) {
     ctx.strokeStyle = dark ? "#686868" : "#aaa";
     ctx.lineWidth = 1;
     ctx.strokeRect(i.x, i.y, i.w, i.h);
+    ctx.save();
+    ctx.font = "12px Geist, sans-serif";
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(i.text, i.x, i.y - 8, i.w);
+    ctx.restore();
   }
   for (const i of board.items.filter((i) => i.kind !== "frame")) {
     ctx.save();

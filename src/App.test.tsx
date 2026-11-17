@@ -978,7 +978,8 @@ describe("frames and presentation", () => {
     expect((screen.getByLabelText("Slide 1 title") as HTMLInputElement).value).toBe("Opening");
     expect(container.querySelector('[data-item-id="note"]')).toBeTruthy();
     fireEvent.keyDown(window, { key: "z", ctrlKey: true });
-    expect(screen.getByLabelText("Slide 2 title")).toBeTruthy();
+    expect((screen.getByLabelText("Slide 1 title") as HTMLInputElement).value).toBe("Closing");
+    expect((screen.getByLabelText("Slide 2 title") as HTMLInputElement).value).toBe("Opening");
   });
 
   it("presents slides with bounded keyboard navigation, blocks edits, and restores the camera", () => {
@@ -1029,4 +1030,83 @@ it("moves a frame with contained content and undoes the entire move", () => {
   fireEvent.keyDown(window, { key: "z", ctrlKey: true });
   expect(frame.style.left).toBe("0px");
   expect(inside.style.left).toBe("50px");
+});
+
+describe("frame review regressions", () => {
+  const withFrame = () => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "frame", kind: "frame", text: "Slide", x: 0, y: 0, w: 960, h: 540 },
+      { id: "inside-a", kind: "note", text: "First", x: 50, y: 50, w: 200, h: 100 },
+      { id: "inside-b", kind: "note", text: "Second", x: 350, y: 50, w: 200, h: 100 },
+      { id: "outside", kind: "note", text: "Outside", x: 1100, y: 50, w: 200, h: 100 },
+    ];
+    initial.boards[0].connections = [{ id: "edge", from: "inside-a", to: "inside-b" }];
+    const result = render(<App initial={initial} />);
+    const canvas = result.container.querySelector(".canvas")!;
+    fireEvent.pointerDown(result.container.querySelector(".frame-label")!, { button: 0, clientX: 0, clientY: 0, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 0, clientY: 0, pointerId: 1 });
+    return result;
+  };
+
+  it("copies a frame with its contents and internal connections through the system clipboard", () => {
+    const { container } = withFrame();
+    const data = new Map<string, string>();
+    fireEvent.copy(window, { clipboardData: { setData: (type: string, value: string) => data.set(type, value) } });
+    const copied = JSON.parse(data.get("application/x-rtboard")!);
+    expect(copied.items.map((i: Item) => i.id)).toEqual(["frame", "inside-a", "inside-b"]);
+    expect(copied.connections).toEqual([{ id: "edge", from: "inside-a", to: "inside-b" }]);
+    fireEvent.paste(window, { clipboardData: { getData: (type: string) => data.get(type) || "", files: [] } });
+    expect(container.querySelectorAll(".board-item")).toHaveLength(7);
+    expect(container.querySelectorAll(".connector-line")).toHaveLength(2);
+  });
+
+  it("copies frame contents through the keyboard clipboard fallback", () => {
+    const { container } = withFrame();
+    fireEvent.keyDown(window, { key: "c", ctrlKey: true });
+    fireEvent.paste(window, { clipboardData: { getData: () => "", files: [] } });
+    expect(container.querySelectorAll(".board-item")).toHaveLength(7);
+    expect(container.querySelectorAll(".item-frame")).toHaveLength(2);
+    expect(screen.getAllByText("First")).toHaveLength(2);
+    expect(screen.getAllByText("Second")).toHaveLength(2);
+    expect(screen.getAllByText("Outside")).toHaveLength(1);
+  });
+
+  it("nudges a frame and its contents exactly once while leaving outside items in place", () => {
+    const { container } = withFrame();
+    fireEvent.keyDown(window, { key: "ArrowRight", shiftKey: true });
+    expect(container.querySelector<HTMLElement>('[data-item-id="frame"]')!.style.left).toBe("10px");
+    expect(container.querySelector<HTMLElement>('[data-item-id="inside-a"]')!.style.left).toBe("60px");
+    expect(container.querySelector<HTMLElement>('[data-item-id="inside-b"]')!.style.left).toBe("360px");
+    expect(container.querySelector<HTMLElement>('[data-item-id="outside"]')!.style.left).toBe("1100px");
+  });
+
+  it("centers the first empty frame in a panned and zoomed viewport", () => {
+    const { container } = render(<App initial={seed()} />);
+    const canvas = container.querySelector(".canvas")!;
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({ x: 0, y: 50, left: 0, top: 50, width: 1200, height: 800, right: 1200, bottom: 850, toJSON: () => ({}) });
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    fireEvent.wheel(canvas, { deltaX: 100, deltaY: 50 });
+    fireEvent.click(screen.getByRole("button", { name: "Frames" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add frame" }));
+    const frame = container.querySelector<HTMLElement>(".item-frame")!;
+    const [x, y, zoom] = container.querySelector<HTMLElement>(".world")!.style.transform.match(/-?[\d.]+/g)!.map(Number);
+    expect((parseFloat(frame.style.left) + parseFloat(frame.style.width) / 2) * zoom + x).toBeCloseTo(600);
+    expect((parseFloat(frame.style.top) + parseFloat(frame.style.height) / 2) * zoom + y).toBeCloseTo(400);
+  });
+
+  it("warns on oversized selections without creating a cropped frame", () => {
+    const initial = seed();
+    initial.boards[0].items = [
+      { id: "left", kind: "note", text: "Left", x: 0, y: 0, w: 200, h: 100 },
+      { id: "right", kind: "note", text: "Right", x: 20000, y: 0, w: 200, h: 100 },
+    ];
+    const { container } = render(<App initial={initial} />);
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "Frames" }));
+    fireEvent.click(screen.getByRole("button", { name: "Frame selection" }));
+    expect(screen.getByText("This selection is too large for one frame. Split it into smaller slides.")).toBeTruthy();
+    expect(container.querySelectorAll(".board-item")).toHaveLength(2);
+    expect(container.querySelector(".item-frame")).toBeNull();
+  });
 });

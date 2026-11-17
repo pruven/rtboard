@@ -76,7 +76,7 @@ import {
   encodeShare,
   decodeShare,
 } from "./model";
-import { createFrame, frameContents, slideCamera } from "./frames";
+import { createFrame, emptyFrameSize, framePadding, frameContents, slideCamera } from "./frames";
 import { canvasFont, shapePaths, sketchPath, penPath } from "./sketch";
 import { readLegacy, saveWorkspace } from "./storage";
 import { exportPng } from "./exportPng";
@@ -326,12 +326,20 @@ export default function App({ initial }: { initial?: Workspace }) {
   };
   const addFrame = () => {
     const last = frames.at(-1);
-    const at = last ? { x: last.x + last.w + 112, y: last.y + 32 } : center();
-    const frame = createFrame(board.items.filter((i) => selected.includes(i.id)), uid(), `Slide ${frames.length + 1}`, at);
-    change({ ...board, items: [...board.items, frame] });
-    setSelected([frame.id]);
-    chooseTool("select");
-    setFramesOpen(true);
+    const r = canvas.current?.getBoundingClientRect();
+    const at = last ? { x: last.x + last.w + 112, y: last.y + framePadding } : {
+      x: ((r?.width || 1000) / 2 - offset.x) / zoom - emptyFrameSize.w / 2 + framePadding,
+      y: ((r?.height || 700) / 2 - offset.y) / zoom - emptyFrameSize.h / 2 + framePadding,
+    };
+    try {
+      const frame = createFrame(board.items.filter((i) => selected.includes(i.id)), uid(), `Slide ${frames.length + 1}`, at);
+      change({ ...board, items: [...board.items, frame] });
+      setSelected([frame.id]);
+      chooseTool("select");
+      setFramesOpen(true);
+    } catch (error) {
+      toast((error as Error).message);
+    }
   };
   const reorderFrame = (id: string, direction: number) => {
     const items = [...board.items];
@@ -1253,7 +1261,8 @@ export default function App({ initial }: { initial?: Workspace }) {
         e.preventDefault();
         fit();
       } else if (mod && e.key === "c" && selected.length) {
-        clipboard.current = board.items.filter((i) => selected.includes(i.id));
+        const ids = new Set(frameContents(board.items, selected));
+        clipboard.current = board.items.filter((i) => ids.has(i.id));
       } else if (["Delete", "Backspace"].includes(e.key) && selectedConnection) {
         e.preventDefault();
         change({ ...board, connections: board.connections.filter((c) => c.id !== selectedConnection) });
@@ -1267,10 +1276,11 @@ export default function App({ initial }: { initial?: Workspace }) {
       ) {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
+        const movedIds = new Set(frameContents(board.items, selected));
         change({
           ...board,
           items: board.items.map((i) =>
-            frameContents(board.items, selected).includes(i.id)
+            movedIds.has(i.id)
               ? {
                   ...i,
                   x:
@@ -1356,9 +1366,10 @@ export default function App({ initial }: { initial?: Workspace }) {
       )
         return;
       e.preventDefault();
-      const items = board.items.filter((i) => selected.includes(i.id));
+      const ids = new Set(frameContents(board.items, selected));
+      const items = board.items.filter((i) => ids.has(i.id));
       const connections = board.connections.filter(
-        (c) => selected.includes(c.from) && selected.includes(c.to),
+        (c) => ids.has(c.from) && ids.has(c.to),
       );
       e.clipboardData?.setData(
         "application/x-rtboard",

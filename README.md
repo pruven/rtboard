@@ -75,7 +75,7 @@ Tests cover the board workflow, selection, group duplication, keyboard controls,
 
 The interface uses a locally served Geist font under its included OFL license. Older starter photographs remain available locally to preserve previously saved boards; they are from Unsplash.
 
-### Frames and presentation
+## Frames and presentation
 
 Open **Frames** on the canvas and choose **Add frame**, or select content and choose **Frame selection**. Each frame is a slide. Rename and reorder slides in the Frames panel; click a slide number to find it on the canvas. Drag a frame's label to move it with all fully contained items, and use its bottom-right handle to resize its boundaries. Deleting a frame keeps its contents.
 
