@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
+  createEvent,
   fireEvent,
   render,
   screen,
@@ -791,5 +792,63 @@ describe("sketch canvas interactions", () => {
     expect(node.style.left).toBe("20px");
     fireEvent.keyDown(window, { key: "z", ctrlKey: true });
     expect(container.querySelectorAll(".board-item")).toHaveLength(1);
+  });
+});
+
+describe("Markdown import", () => {
+  const openImport = () => {
+    fireEvent.click(screen.getByRole("button", { name: "File" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Import Markdown/ }));
+  };
+
+  it("imports connected editable notes alongside existing content and undoes in one step", () => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "existing", kind: "note", x: 0, y: 0, w: 200, h: 100, text: "Keep me" }];
+    const { container } = render(<App initial={initial} />);
+    openImport();
+    fireEvent.change(screen.getByRole("textbox", { name: "Markdown" }), { target: { value: "# Roadmap\n- Build\n  - Test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Import notes" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(container.querySelectorAll(".board-item")).toHaveLength(4);
+    expect(screen.getByText("Keep me")).toBeTruthy();
+    expect(screen.getByText("Roadmap")).toBeTruthy();
+    expect(container.querySelectorAll(".board-item.selected")).toHaveLength(3);
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(container.querySelectorAll(".board-item")).toHaveLength(1);
+    expect(screen.getByText("Keep me")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
+    expect(container.querySelectorAll(".board-item")).toHaveLength(4);
+    fireEvent.doubleClick(screen.getByText("Build"));
+    expect(screen.getByLabelText("Edit text")).toBeTruthy();
+  });
+
+  it("reads a Markdown file into the dialog before importing", async () => {
+    const { container } = render(<App initial={seed()} />);
+    openImport();
+    const file = new File(["# From file\n- Child"], "plan.md", { type: "text/markdown" });
+    fireEvent.change(screen.getByLabelText("Choose Markdown file"), { target: { files: [file] } });
+    await waitFor(() => expect((screen.getByRole("textbox", { name: "Markdown" }) as HTMLTextAreaElement).value).toBe("# From file\n- Child"));
+    fireEvent.click(screen.getByRole("button", { name: "Import notes" }));
+    expect(container.querySelectorAll(".board-item")).toHaveLength(2);
+  });
+
+  it("imports dropped Markdown files", async () => {
+    const { container } = render(<App initial={seed()} />);
+    const canvas = container.querySelector(".canvas")!;
+    const event = createEvent.drop(canvas, { dataTransfer: { files: [new File(["# Dropped\n- Note"], "notes.markdown")] } });
+    Object.defineProperties(event, { clientX: { value: 100 }, clientY: { value: 200 } });
+    fireEvent(canvas, event);
+    await waitFor(() => expect(container.querySelectorAll(".board-item")).toHaveLength(2));
+    expect(screen.getByText("Dropped")).toBeTruthy();
+  });
+
+  it("keeps the dialog open and the board intact on invalid input", () => {
+    const { container } = render(<App initial={seed()} />);
+    openImport();
+    fireEvent.change(screen.getByRole("textbox", { name: "Markdown" }), { target: { value: "---" } });
+    fireEvent.click(screen.getByRole("button", { name: "Import notes" }));
+    expect(screen.getByRole("alert").textContent).toContain("Add a Markdown");
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(container.querySelectorAll(".board-item")).toHaveLength(0);
   });
 });

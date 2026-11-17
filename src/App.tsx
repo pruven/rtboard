@@ -75,10 +75,11 @@ import {
 import { canvasFont, shapePaths, sketchPath, penPath } from "./sketch";
 import { readLegacy, saveWorkspace } from "./storage";
 import { exportPng } from "./exportPng";
+import { importMarkdown, markdownLimit } from "./markdown";
 import { readTheme, saveTheme } from "./theme";
 import { instagramEmbedDocument, instagramPermalink, instagramSandbox } from "./instagram";
 type Tool = "select" | "hand" | "text" | "draw" | "connect" | "shape";
-type Modal = "help" | "links" | "link" | "delete" | "reconnect" | null;
+type Modal = "help" | "links" | "link" | "delete" | "reconnect" | "markdown" | null;
 type Gesture = {
   kind: "pan" | "drag" | "resize" | "draw" | "shape" | "connect" | "marquee";
   start: Point;
@@ -137,6 +138,9 @@ export default function App({ initial }: { initial?: Workspace }) {
     [searchIndex, setSearchIndex] = useState(0),
     [notice, setNotice] = useState(""),
     [saved, setSaved] = useState("Saved");
+  const [markdown, setMarkdown] = useState("");
+  const [markdownError, setMarkdownError] = useState("");
+  const markdownFiles = useRef<HTMLInputElement>(null);
   const [links, setLinks] = useState(""),
     [linkTitle, setLinkTitle] = useState(""),
     [shape, setShape] = useState<"rectangle" | "ellipse" | "note">("rectangle"),
@@ -285,14 +289,14 @@ export default function App({ initial }: { initial?: Workspace }) {
     setZoom(1);
     setOffset({ x: 0, y: 0 });
   };
-  const fit = () => {
-    if (!board.items.length) {
+  const frameItems = (items: Item[]) => {
+    if (!items.length) {
       reset();
       return;
     }
     const r = canvas.current?.getBoundingClientRect();
     if (!r) return;
-    const b = bounds(board.items),
+    const b = bounds(items),
       z = Math.max(
         0.1,
         Math.min(
@@ -307,6 +311,7 @@ export default function App({ initial }: { initial?: Workspace }) {
       y: (r.height - b.h * z) / 2 - b.y * z - 15,
     });
   };
+  const fit = () => frameItems(board.items);
   const zoomAt = (next: number, cx?: number, cy?: number) => {
     const c = camera.current,
       r = canvas.current?.getBoundingClientRect(),
@@ -490,9 +495,42 @@ export default function App({ initial }: { initial?: Workspace }) {
     setLinkTitle("");
     toast(`${items.length} link${items.length === 1 ? "" : "s"} added`);
   };
+  const addMarkdown = (text: string, at?: Point) => {
+    const existing = current.current;
+    const area = existing.items.length ? bounds(existing.items) : null;
+    const imported = importMarkdown(text, at || (area
+      ? { x: area.x + area.w + 120, y: area.y }
+      : center()));
+    if (existing.items.length + imported.items.length > 2000)
+      throw new Error("This import would exceed 2,000 items. Import into a new board instead.");
+    change({
+      ...existing,
+      items: [...existing.items, ...imported.items],
+      connections: [...existing.connections, ...imported.connections],
+    });
+    chooseTool("select");
+    setSelected(imported.items.map((item) => item.id));
+    frameItems(imported.items);
+    toast(`${imported.items.length} Markdown note${imported.items.length === 1 ? "" : "s"} added`);
+  };
+  const readMarkdown = async (file: File) => {
+    if (file.size > markdownLimit) throw new Error("Choose Markdown smaller than 1 MB.");
+    return file.text();
+  };
   const readFiles = async (list: FileList | File[], at = center()) => {
     const imported: Item[] = [];
     for (const [index, file] of Array.from(list).entries()) {
+      if (/\.(md|markdown)$/i.test(file.name)) {
+        const boardId = current.current.id;
+        try {
+          const text = await readMarkdown(file);
+          if (current.current.id !== boardId) throw new Error("The board changed. Drop the Markdown file again.");
+          addMarkdown(text, { x: at.x + index * 40, y: at.y + index * 40 });
+        } catch (e) {
+          toast(e instanceof Error ? e.message : "Could not import Markdown.");
+        }
+        continue;
+      }
       if (/\.(rtboard|json|html)$/i.test(file.name)) {
         await loadFile(file);
         continue;
@@ -502,7 +540,7 @@ export default function App({ initial }: { initial?: Workspace }) {
           file.type,
         )
       ) {
-        toast("Supported: images, MP4/WebM video, audio, and board files.");
+        toast("Supported: images, MP4/WebM video, audio, Markdown, and board files.");
         continue;
       }
       if (file.size > 40 * 1024 * 1024) {
@@ -2367,6 +2405,15 @@ export default function App({ initial }: { initial?: Workspace }) {
               Import links…
               <small>Paste a list of links to add many items at once</small>
             </button>
+            <button role="menuitem" onClick={() => {
+              setMenu(false);
+              setMarkdown("");
+              setMarkdownError("");
+              setModal("markdown");
+            }}>
+              Import Markdown…
+              <small>Turn headings and lists into connected notes</small>
+            </button>
             <button role="menuitem" onClick={() => void copyShare()}>
               Copy share link<small>Opens in browser, no download needed</small>
             </button>
@@ -2527,7 +2574,7 @@ export default function App({ initial }: { initial?: Workspace }) {
             role="dialog"
             aria-modal="true"
             aria-label={
-              modal === "reconnect" ? "Reconnect endpoint" : modal === "help"
+              modal === "markdown" ? "Import Markdown" : modal === "reconnect" ? "Reconnect endpoint" : modal === "help"
                 ? "Keyboard shortcuts"
                 : modal === "delete"
                   ? "Delete board"
@@ -2568,6 +2615,35 @@ export default function App({ initial }: { initial?: Workspace }) {
                   <button type="button" onClick={closeReconnect}>Cancel</button>
                   <button type="submit" className="primary">Apply connection</button>
                 </div>
+              </form>
+            )}
+            {modal === "markdown" && (
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                try {
+                  addMarkdown(markdown);
+                  setModal(null);
+                  setMarkdown("");
+                  setMarkdownError("");
+                } catch (error) {
+                  setMarkdownError(error instanceof Error ? error.message : "Could not import Markdown.");
+                }
+              }}>
+                <h2>Import Markdown</h2>
+                <p>Headings and nested lists become connected, editable notes. Paragraphs become notes under their heading. Inline formatting stays as plain text.</p>
+                <label>
+                  Markdown
+                  <textarea autoFocus aria-label="Markdown" rows={10}
+                    placeholder={"# Project plan\n## Ideas\n- First idea\n  - Next step"}
+                    value={markdown} aria-invalid={!!markdownError}
+                    aria-describedby={markdownError ? "markdown-error" : undefined}
+                    onChange={(e) => { setMarkdown(e.target.value); setMarkdownError(""); }} />
+                </label>
+                <button type="button" className="secondary" onClick={() => markdownFiles.current?.click()}>
+                  <FolderOpen size={15} /> Choose .md file
+                </button>
+                {markdownError && <p id="markdown-error" role="alert">{markdownError}</p>}
+                <button type="submit" className="primary" disabled={!markdown.trim()}>Import notes</button>
               </form>
             )}
             {modal === "help" && (
@@ -2702,6 +2778,17 @@ export default function App({ initial }: { initial?: Workspace }) {
           e.target.value = "";
         }}
       />
+      <input ref={markdownFiles} type="file" accept=".md,.markdown,text/markdown" hidden
+        aria-label="Choose Markdown file"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (!file) return;
+          void readMarkdown(file).then((text) => {
+            setMarkdown(text);
+            setMarkdownError("");
+          }).catch((error) => setMarkdownError(error instanceof Error ? error.message : "Could not read Markdown."));
+        }} />
       <input
         ref={imports}
         type="file"
