@@ -842,6 +842,75 @@ describe("Markdown import", () => {
     expect(screen.getByText("Dropped")).toBeTruthy();
   });
 
+  const dropMarkdown = (canvas: Element, files: File[]) => {
+    const event = createEvent.drop(canvas, { dataTransfer: { files } });
+    Object.defineProperties(event, { clientX: { value: 100 }, clientY: { value: 200 } });
+    fireEvent(canvas, event);
+  };
+
+  it("imports a multi-file Markdown drop with one undo/redo step and no overlaps", async () => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "existing", kind: "note", x: -400, y: 0, w: 200, h: 100, text: "Keep me" }];
+    const { container } = render(<App initial={initial} />);
+    dropMarkdown(container.querySelector(".canvas")!, [
+      new File(["# First\n- One"], "first.md"),
+      new File(["# Second\n- Two"], "second.markdown"),
+    ]);
+    await waitFor(() => expect(container.querySelectorAll(".board-item")).toHaveLength(5));
+    expect(container.querySelectorAll("[data-connection-id]")).toHaveLength(2);
+    const first = screen.getByText("First").closest<HTMLElement>(".board-item")!;
+    const second = screen.getByText("Second").closest<HTMLElement>(".board-item")!;
+    expect(parseFloat(second.style.top)).toBeGreaterThan(parseFloat(first.style.top) + parseFloat(first.style.height));
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(container.querySelectorAll(".board-item")).toHaveLength(1);
+    expect(container.querySelectorAll("[data-connection-id]")).toHaveLength(0);
+    expect(screen.getByText("Keep me")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
+    expect(container.querySelectorAll(".board-item")).toHaveLength(5);
+    expect(container.querySelectorAll("[data-connection-id]")).toHaveLength(2);
+  });
+
+  it.each([
+    ["invalid", "---", "Add a Markdown"],
+    ["combined note limit", "- Note\n".repeat(500), "500 Markdown"],
+    ["file size limit", "a".repeat(1_000_001), "1 MB"],
+  ])("rejects the whole Markdown drop on %s", async (_, source, message) => {
+    const { container } = render(<App initial={seed()} />);
+    dropMarkdown(container.querySelector(".canvas")!, [
+      new File(["# Valid"], "first.md"), new File([source], "second.md"),
+    ]);
+    await waitFor(() => expect(container.querySelector(".toast")?.textContent).toContain(message));
+    expect(container.querySelectorAll(".board-item")).toHaveLength(0);
+    expect(container.querySelectorAll("[data-connection-id]")).toHaveLength(0);
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(container.querySelectorAll(".board-item")).toHaveLength(0);
+  });
+
+  it("keeps keyboard focus inside the Markdown dialog as its submit button becomes enabled", () => {
+    render(<App initial={seed()} />);
+    openImport();
+    const textarea = screen.getByRole("textbox", { name: "Markdown" });
+    const close = screen.getByRole("button", { name: "Close dialog" });
+    const choose = screen.getByRole("button", { name: "Choose .md file" });
+    const submit = screen.getByRole("button", { name: "Import notes" }) as HTMLButtonElement;
+    expect(document.activeElement).toBe(textarea);
+    expect(submit.disabled).toBe(true);
+    close.focus();
+    expect(fireEvent.keyDown(close, { key: "Tab", shiftKey: true })).toBe(false);
+    expect(document.activeElement).toBe(choose);
+    expect(fireEvent.keyDown(choose, { key: "Tab" })).toBe(false);
+    expect(document.activeElement).toBe(close);
+    fireEvent.change(textarea, { target: { value: "# Note" } });
+    expect(submit.disabled).toBe(false);
+    close.focus();
+    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(submit);
+    fireEvent.keyDown(submit, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(close, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("keeps the dialog open and the board intact on invalid input", () => {
     const { container } = render(<App initial={seed()} />);
     openImport();

@@ -50,6 +50,8 @@ export function importMarkdown(source: string, at: Point = { x: 0, y: 0 }) {
     const opening = line.match(/^\s{0,3}(`{3,}|~{3,})(.*)$/);
     if (opening) {
       flush();
+      const indent = line.match(/^\s*/)?.[0].replace(/\t/g, "    ").length || 0;
+      while (lists.length && lists.at(-1)!.indent >= indent) lists.pop();
       fence = { marker: opening[1][0], size: opening[1].length, lines: [], parent: parent() };
       continue;
     }
