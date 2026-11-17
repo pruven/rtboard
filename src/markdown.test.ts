@@ -18,13 +18,31 @@ describe("Markdown import", () => {
   it("handles CRLF, setext headings, tabs, continuation lines, and heading level jumps", () => {
     const { items, connections } = importMarkdown("\uFEFFTitle\r\n=====\r\n- Parent\r\n\t- Child\r\n\t  continued\r\n\r\n### C#\r\nParagraph\r\nwrapped\r\n\r\n---\r\n");
     expect(items.map((i) => i.text)).toEqual(["Title", "Parent", "Child\ncontinued", "C#", "Paragraph\nwrapped"]);
-    expect(connections).toHaveLength(4);
+    expect(connections.map((c) => [items.find((i) => i.id === c.from)!.text, items.find((i) => i.id === c.to)!.text])).toEqual([
+      ["Title", "Parent"], ["Parent", "Child\ncontinued"],
+      ["Title", "C#"], ["C#", "Paragraph\nwrapped"],
+    ]);
   });
 
   it("keeps fenced code and HTML as inert text, including unclosed fences", () => {
     const { items } = importMarkdown('# Code\n```html\n<script>alert(1)</script>\n# Not a heading\n- Not a list\n```\n\n~~~\nunfinished');
     expect(items.map((i) => i.text)).toEqual(["Code", "<script>alert(1)</script>\n# Not a heading\n- Not a list", "unfinished"]);
     expect(items.every((i) => i.kind === "note" && !i.src)).toBe(true);
+  });
+
+  it.each(["", "# Section\n"])("keeps unindented fences outside list scopes (%j)", (prefix) => {
+    const { items, connections } = importMarkdown(prefix + "- Parent\n  - Child\n\n```\ncode\n```\n- Sibling");
+    const edges = connections.map((c) => [items.find((i) => i.id === c.from)!.text, items.find((i) => i.id === c.to)!.text]);
+    expect(edges).toEqual(prefix ? [
+      ["Section", "Parent"], ["Parent", "Child"], ["Section", "code"], ["Section", "Sibling"],
+    ] : [["Parent", "Child"]]);
+  });
+
+  it("keeps indented fences under the remaining list scope", () => {
+    const { items, connections } = importMarkdown("# Section\n- Parent\n  - Child\n  ```\n  code\n  ```");
+    expect(connections.map((c) => [items.find((i) => i.id === c.from)!.text, items.find((i) => i.id === c.to)!.text])).toEqual([
+      ["Section", "Parent"], ["Parent", "Child"], ["Parent", "  code"],
+    ]);
   });
 
   it("lays notes out without overlap and preserves them through board validation", () => {

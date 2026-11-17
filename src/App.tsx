@@ -495,12 +495,23 @@ export default function App({ initial }: { initial?: Workspace }) {
     setLinkTitle("");
     toast(`${items.length} link${items.length === 1 ? "" : "s"} added`);
   };
-  const addMarkdown = (text: string, at?: Point) => {
+  const addMarkdown = (text: string | string[], at?: Point) => {
     const existing = current.current;
     const area = existing.items.length ? bounds(existing.items) : null;
-    const imported = importMarkdown(text, at || (area
+    const origin = at || (area
       ? { x: area.x + area.w + 120, y: area.y }
-      : center()));
+      : center());
+    const imported: { items: Item[]; connections: Board["connections"] } = { items: [], connections: [] };
+    let y = origin.y;
+    for (const source of typeof text === "string" ? [text] : text) {
+      const document = importMarkdown(source, { x: origin.x, y });
+      imported.items.push(...document.items);
+      imported.connections.push(...document.connections);
+      if (imported.items.length > 500)
+        throw new Error("Import up to 500 Markdown notes at a time.");
+      const area = bounds(document.items);
+      y = area.y + area.h + 60;
+    }
     if (existing.items.length + imported.items.length > 2000)
       throw new Error("This import would exceed 2,000 items. Import into a new board instead.");
     change({
@@ -518,19 +529,22 @@ export default function App({ initial }: { initial?: Workspace }) {
     return file.text();
   };
   const readFiles = async (list: FileList | File[], at = center()) => {
-    const imported: Item[] = [];
-    for (const [index, file] of Array.from(list).entries()) {
-      if (/\.(md|markdown)$/i.test(file.name)) {
-        const boardId = current.current.id;
-        try {
-          const text = await readMarkdown(file);
-          if (current.current.id !== boardId) throw new Error("The board changed. Drop the Markdown file again.");
-          addMarkdown(text, { x: at.x + index * 40, y: at.y + index * 40 });
-        } catch (e) {
-          toast(e instanceof Error ? e.message : "Could not import Markdown.");
-        }
-        continue;
+    const batch = Array.from(list);
+    const markdownBatch = batch.filter((file) => /\.(md|markdown)$/i.test(file.name));
+    if (markdownBatch.length) {
+      const boardId = current.current.id;
+      try {
+        const sources = await Promise.all(markdownBatch.map(readMarkdown));
+        if (current.current.id !== boardId) throw new Error("The board changed. Drop the Markdown files again.");
+        addMarkdown(sources, at);
+      } catch (e) {
+        toast(e instanceof Error ? e.message : "Could not import Markdown.");
+        return;
       }
+    }
+    const imported: Item[] = [];
+    for (const [index, file] of batch.entries()) {
+      if (/\.(md|markdown)$/i.test(file.name)) continue;
       if (/\.(rtboard|json|html)$/i.test(file.name)) {
         await loadFile(file);
         continue;
@@ -1360,7 +1374,7 @@ export default function App({ initial }: { initial?: Workspace }) {
       els = () =>
         Array.from(
           dialog?.querySelectorAll<HTMLElement>(
-            "button,input,textarea,a[href]",
+            'button:not(:disabled),input:not(:disabled):not([type="hidden"]),textarea:not(:disabled),a[href]',
           ) || [],
         );
     (dialog?.querySelector<HTMLElement>("input,textarea") || els()[0])?.focus();
@@ -1368,7 +1382,11 @@ export default function App({ initial }: { initial?: Workspace }) {
       if (e.key !== "Tab") return;
       const list = els(),
         index = list.indexOf(document.activeElement as HTMLElement);
-      if (e.shiftKey && index === 0) {
+      if (!list.length) return;
+      if (index === -1) {
+        e.preventDefault();
+        (e.shiftKey ? list.at(-1) : list[0])?.focus();
+      } else if (e.shiftKey && index === 0) {
         e.preventDefault();
         list.at(-1)?.focus();
       } else if (!e.shiftKey && index === list.length - 1) {
