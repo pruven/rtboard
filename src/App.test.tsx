@@ -1110,3 +1110,84 @@ describe("frame review regressions", () => {
     expect(container.querySelector(".item-frame")).toBeNull();
   });
 });
+
+describe("fullscreen presentation", () => {
+  afterEach(() => {
+    Reflect.deleteProperty(document, "fullscreenElement");
+    Reflect.deleteProperty(document, "exitFullscreen");
+  });
+  const setup = () => {
+    const initial = seed();
+    initial.boards[0].items = [{ id: "slide", kind: "frame", text: "Opening", x: 0, y: 0, w: 960, h: 540 }];
+    const result = render(<App initial={initial} />);
+    const canvas = result.container.querySelector<HTMLElement>(".canvas")!;
+    let fullscreen: Element | null = null;
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => fullscreen });
+    const enterFullscreen = () => {
+      fullscreen = canvas;
+      fireEvent(document, new Event("fullscreenchange"));
+    };
+    const request = vi.fn(async () => enterFullscreen());
+    const exit = vi.fn(async () => {
+      fullscreen = null;
+      fireEvent(document, new Event("fullscreenchange"));
+    });
+    Object.defineProperty(canvas, "requestFullscreen", { configurable: true, value: request });
+    Object.defineProperty(document, "exitFullscreen", { configurable: true, value: exit });
+    return { ...result, canvas, request, exit, enterFullscreen, leaveFullscreen: () => {
+      fullscreen = null;
+      fireEvent(document, new Event("fullscreenchange"));
+    } };
+  };
+
+  it("requests fullscreen on Present and leaves it on Exit", async () => {
+    const { canvas, request, exit } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Present slides" }));
+    expect(request).toHaveBeenCalledOnce();
+    expect(document.fullscreenElement).toBe(canvas);
+    fireEvent.click(screen.getByRole("button", { name: "Exit presentation" }));
+    expect(exit).toHaveBeenCalledOnce();
+    expect(canvas.classList.contains("presenting")).toBe(false);
+  });
+
+  it("restores the canvas when the browser leaves fullscreen", () => {
+    const { container, canvas, leaveFullscreen } = setup();
+    const world = container.querySelector<HTMLElement>(".world")!;
+    const camera = world.style.transform;
+    fireEvent.click(screen.getByRole("button", { name: "Present slides" }));
+    leaveFullscreen();
+    expect(canvas.classList.contains("presenting")).toBe(false);
+    expect(world.style.transform).toBe(camera);
+  });
+
+  it("keeps presenting when the browser rejects fullscreen", async () => {
+    const { canvas, request } = setup();
+    request.mockRejectedValueOnce(new Error("Fullscreen denied"));
+    fireEvent.click(screen.getByRole("button", { name: "Present slides" }));
+    await waitFor(() => expect(screen.getByText("Fullscreen is unavailable. Presenting in this window.")).toBeTruthy());
+    expect(canvas.classList.contains("presenting")).toBe(true);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(canvas.classList.contains("presenting")).toBe(false);
+  });
+
+  it("leaves fullscreen if entry completes after the presentation has exited", async () => {
+    const { canvas, request, exit, enterFullscreen } = setup();
+    let finishEntry = () => {};
+    request.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finishEntry = () => { enterFullscreen(); resolve(); };
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "Present slides" }));
+    fireEvent.click(screen.getByRole("button", { name: "Exit presentation" }));
+    finishEntry();
+    await waitFor(() => expect(exit).toHaveBeenCalledOnce());
+    expect(canvas.classList.contains("presenting")).toBe(false);
+    expect(document.fullscreenElement).toBeNull();
+  });
+
+  it("releases fullscreen when the presentation unmounts", () => {
+    const { unmount, exit } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Present slides" }));
+    unmount();
+    expect(exit).toHaveBeenCalledOnce();
+  });
+});
